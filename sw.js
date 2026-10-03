@@ -1,7 +1,7 @@
 /* FACEOFF Lax Stats - offline service worker
    Caches the app shell + the React CDN files so it launches with no signal
    after the first online load. Bump CACHE_VERSION when you deploy a new build. */
-const CACHE_VERSION = "faceoff-v1";
+const CACHE_VERSION = "faceoff-v2";
 const APP_SHELL = [
   "./",
   "./index.html",
