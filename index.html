@@ -235,16 +235,31 @@ async function saveState(s) {
     }
     catch (e) { }
 }
-/* ------------------------- cloud sync (SQL API) ------------------------- */
+/* ------------------------- cloud sync (Supabase) ------------------------- */
 const CLOUD_KEY = "faceoff-cloud";
+// Built-in connection so the app is pre-configured out of the box (the anon
+// publishable key is public by design and safe to ship in the app).
+const CLOUD_DEFAULTS = {
+    url: "https://xjhbtlzknqjscwbcbhua.supabase.co",
+    key: "sb_publishable_5j9yk_rQakiGDeYicN4_Uw_nE5lMtbh",
+    team: "express-east-2034",
+    enabled: true,
+};
 function getCloudCfg() {
     try {
         const v = localStorage.getItem(CLOUD_KEY);
-        if (v)
-            return JSON.parse(v);
+        if (v) {
+            const s = JSON.parse(v) || {};
+            return {
+                url: (s.url && s.url.trim()) || CLOUD_DEFAULTS.url,
+                key: (s.key && s.key.trim()) || CLOUD_DEFAULTS.key,
+                team: (s.team && s.team.trim()) || CLOUD_DEFAULTS.team,
+                enabled: s.enabled !== undefined ? s.enabled : CLOUD_DEFAULTS.enabled,
+            };
+        }
     }
     catch (e) { }
-    return { url: "", team: "", key: "", enabled: false };
+    return { ...CLOUD_DEFAULTS };
 }
 function saveCloudCfg(c) { try {
     localStorage.setItem(CLOUD_KEY, JSON.stringify(c));
@@ -457,9 +472,9 @@ function App() {
     const urlRef = useRef(null), keyRef = useRef(null), teamRef = useRef(null);
     // read the live field values straight from the inputs (beats iOS autofill not firing onChange)
     function readCloudFields() {
-        const url = ((urlRef.current && urlRef.current.value) || cloud.url || "").trim();
-        const key = ((keyRef.current && keyRef.current.value) || cloud.key || "").trim();
-        const team = ((teamRef.current && teamRef.current.value) || cloud.team || "").trim();
+        const url = ((urlRef.current && urlRef.current.value) || cloud.url || CLOUD_DEFAULTS.url || "").trim();
+        const key = ((keyRef.current && keyRef.current.value) || cloud.key || CLOUD_DEFAULTS.key || "").trim();
+        const team = ((teamRef.current && teamRef.current.value) || cloud.team || CLOUD_DEFAULTS.team || "").trim();
         const cfg = { url, key, team, enabled: true };
         saveCloudCfg(cfg);
         setCloud(cfg);
