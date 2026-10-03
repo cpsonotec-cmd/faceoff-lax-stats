@@ -1412,7 +1412,7 @@ function App() {
                         React.createElement("button", { className: "qbtn2", onClick: () => setStatAssign({ key: "to", label: "Failed Clear", teamKey: "fclr", who: "Whose failed clear?" }) }, "Failed Clear"),
                         React.createElement("button", { className: "qbtn2", onClick: () => setStatAssign({ key: "fw", label: "Faceoff Won", who: "Who won it?" }) }, "FOW"),
                         React.createElement("button", { className: "qbtn2", onClick: () => setStatAssign({ key: "fl", label: "Faceoff Lost", who: "Who lost it?" }) }, "FOL")),
-                    React.createElement("div", { className: "pquick", style: { marginTop: 6 } }, [["ct", "CTO"], ["to", "TO"], ["gb", "GB"], ["sog", "SOG"], ["ms", "Shot"]].map(([key, label]) => (React.createElement("button", { key: key, className: "qbtn2", onClick: () => setStatAssign({ key, label }) }, label))))),
+                    React.createElement("div", { className: "pquick", style: { marginTop: 6 } }, [["ct", "CTO"], ["to", "TO"], ["gb", "GB"], ["sog", "SOG"], ["ms", "Miss"]].map(([key, label]) => (React.createElement("button", { key: key, className: "qbtn2", onClick: () => setStatAssign({ key, label }) }, label))))),
                 React.createElement("div", { className: "teamline" },
                     React.createElement("div", { className: "teamline-head" },
                         React.createElement("span", { className: "teamline-dot", style: { background: activeGame.oppColor } }),
