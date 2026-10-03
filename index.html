@@ -474,6 +474,7 @@ function App() {
     const [syncMsg, setSyncMsg] = useState("");
     const pushTimer = useRef(null);
     const urlRef = useRef(null), keyRef = useRef(null), teamRef = useRef(null);
+    const fileInputRef = useRef(null);
     // read the live field values straight from the inputs (beats iOS autofill not firing onChange)
     function readCloudFields() {
         const url = ((urlRef.current && urlRef.current.value) || cloud.url || CLOUD_DEFAULTS.url || "").trim();
@@ -773,6 +774,28 @@ function App() {
         });
         toast("Opponent goal");
     }
+    function describeEntry(e) {
+        if (!e)
+            return "";
+        if (e.oppGoal)
+            return `${(activeGame && activeGame.oppName) || "Opponent"} goal`;
+        if (e.oppStat)
+            return `${(activeGame && activeGame.oppName) || "Opponent"} ${e.label || e.oppStat}`;
+        if (e.teamStat && !e.playerId)
+            return e.label || e.teamStat;
+        const who = e.num != null ? ` #${e.num}` : "";
+        return `${e.label || e.statKey || "entry"}${who}`;
+    }
+    function undoLast() {
+        if (!activeGame || !activeGame.log || activeGame.log.length === 0) {
+            toast("Nothing to undo");
+            return;
+        }
+        const last = activeGame.log[0];
+        const label = describeEntry(last);
+        removeEntry(last.id);
+        toast(`Undid ${label}`);
+    }
     function logTeamStat(key, label) {
         updateActive((g) => {
             const ts = { ...(g.teamStats || {}), [key]: ((g.teamStats || {})[key] || 0) + 1 };
@@ -1034,6 +1057,65 @@ function App() {
             fname: "faceoff-" + (safe || "stats"),
         });
     }
+    function buildGameRecap(g) {
+        if (!g)
+            return "";
+        const a = aggregate(roster, [g]);
+        const tt = aggregateTeam([g]);
+        const res = g.scores.team > g.scores.opp ? "W" : g.scores.team < g.scores.opp ? "L" : "T";
+        const lines = [];
+        lines.push(`${settings.teamName} ${g.scores.team}, ${g.oppName} ${g.scores.opp} (${g.status === "final" ? "Final" : "In progress"}) ${res}`);
+        lines.push(fmtDate(g.date) + (g.tournamentId ? " · " + (tournamentName(g.tournamentId) || "") : "") + (g.scrimmage ? " · Scrimmage" : ""));
+        const scorers = roster
+            .map((p) => ({ p, st: a.map[p.id] || {} }))
+            .filter((x) => (x.st.g || 0) > 0 || (x.st.a || 0) > 0)
+            .sort((x, y) => pts(y.st) - pts(x.st));
+        if (scorers.length) {
+            lines.push("");
+            lines.push("Scoring");
+            scorers.forEach(({ p, st }) => {
+                const bits = [];
+                if (st.g)
+                    bits.push(`${st.g}G`);
+                if (st.a)
+                    bits.push(`${st.a}A`);
+                lines.push(`  #${p.num} ${p.name || ""} ${bits.join(" ")}`.replace(/\s+$/, ""));
+            });
+        }
+        const teamFw = roster.reduce((x, p) => x + ((a.map[p.id] || {}).fw || 0), 0);
+        const teamFl = roster.reduce((x, p) => x + ((a.map[p.id] || {}).fl || 0), 0);
+        lines.push("");
+        lines.push(`Faceoffs ${teamFw}/${teamFw + teamFl} (${pct(teamFw, teamFw + teamFl)})`);
+        lines.push(`Clears ${tt.clr}/${tt.clr + tt.fclr} (${pct(tt.clr, tt.clr + tt.fclr)})`);
+        const goalie = roster.find((p) => p.id === g.goalieId);
+        if (goalie) {
+            const gs = a.map[goalie.id] || {};
+            lines.push(`Goalie #${goalie.num} ${goalie.name || ""}: ${gs.sv || 0} saves (${pct(gs.sv || 0, (gs.sv || 0) + (gs.ga || 0))})`.replace("  ", " "));
+        }
+        lines.push("");
+        lines.push("— FACEOFF Lax Stats");
+        return lines.join("\n");
+    }
+    async function shareRecap(g) {
+        const text = buildGameRecap(g);
+        try {
+            if (navigator.share) {
+                await navigator.share({ title: "Game recap", text });
+                return;
+            }
+        }
+        catch (e) {
+            if (e && e.name === "AbortError")
+                return;
+        }
+        try {
+            await navigator.clipboard.writeText(text);
+            toast("Recap copied");
+            return;
+        }
+        catch (e) { }
+        setExportData({ title: "Game recap", hint: "Copy this and paste it into a team text or email.", text });
+    }
     const mmss = `${String(Math.floor(secLeft / 60)).padStart(2, "0")}:${String(secLeft % 60).padStart(2, "0")}`;
     const active = roster.find((p) => p.id === activePlayer);
     const tournamentName = (id) => (tournaments.find((t) => t.id === id) || {}).name;
@@ -1200,6 +1282,39 @@ function App() {
             });
         }
     }
+    function backupToFile() {
+        const payload = JSON.stringify({ app: "faceoff", kind: "season", version: 2, data: state }, null, 2);
+        doDownload("faceoff-backup-" + today() + ".json", "application/json", payload);
+        toast("Backup downloaded");
+    }
+    function handleRestoreFile(e) {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = "";
+        if (!file)
+            return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            let obj;
+            try {
+                obj = decodePayload(String(reader.result));
+            }
+            catch (err) {
+                toast("Couldn't read that file");
+                return;
+            }
+            if (!obj || obj.kind !== "season") {
+                toast("That file isn't a season backup");
+                return;
+            }
+            askConfirm("Replace ALL current data with this backup file?", () => {
+                setState({ ...initialState, ...migrateState(obj.data) });
+                setTab("game");
+                toast("Backup restored");
+            });
+        };
+        reader.onerror = () => toast("Couldn't read that file");
+        reader.readAsText(file);
+    }
     function startNewSeason() {
         askConfirm("Start a new season? Keeps your team, roster, and rules; clears all tournaments and games.", () => {
             setState((prev) => ({ ...prev, tournaments: [], games: [], activeGameId: null }));
@@ -1362,12 +1477,16 @@ function App() {
                     React.createElement("div", { className: "team-name", style: { color: activeGame.oppColor } }, activeGame.oppName),
                     React.createElement("div", { className: "score" }, activeGame.scores.opp),
                     React.createElement("button", { className: "opp-goal", onClick: oppGoal }, "+ Goal"))),
+            React.createElement("div", { className: "undobar" },
+                React.createElement("span", { className: "undobar-last" }, activeGame.log && activeGame.log.length ? `Last: ${describeEntry(activeGame.log[0])}` : "No actions yet"),
+                React.createElement("button", { className: "undo-btn", onClick: undoLast, disabled: !(activeGame.log && activeGame.log.length) }, "\u27F2 Undo")),
             React.createElement("div", { className: "qbar" }, periodLabels(rules).map((lab, i) => {
                 const val = i + 1;
                 return (React.createElement("button", { key: lab, className: `qbtn ${activeGame.period === val ? "qbtn-on" : ""}`, onClick: () => setPeriod(val) }, lab));
             })),
             React.createElement("div", { className: "gameacts" },
                 React.createElement("button", { className: "btn btn-sm btn-danger", onClick: () => deleteGame(activeGame.id) }, "Delete"),
+                React.createElement("button", { className: "btn btn-sm", onClick: () => shareRecap(activeGame) }, "Share recap"),
                 React.createElement("button", { className: "btn btn-sm btn-primary", onClick: saveGame }, "Save game")),
             React.createElement("div", { className: "voicebar" },
                 React.createElement("button", { className: `mic ${listening ? "mic-on" : ""}`, onClick: toggleVoice, disabled: !voiceSupported },
@@ -1580,6 +1699,34 @@ function App() {
                     standouts.push(["Ground balls", nm(gbL.p), `${gbL.val}`]);
                 if (sogP)
                     standouts.push(["Best SOG% (10+ sh)", nm(sogP), `${Math.round(sogV * 100)}%`]);
+                // scoring by period, computed from the game logs
+                const periodScore = {};
+                let maxPeriod = 0;
+                scopeGames.forEach((g) => {
+                    (g.log || []).forEach((e) => {
+                        const pd = e.period || 1;
+                        if (!periodScore[pd])
+                            periodScore[pd] = { gf: 0, ga: 0 };
+                        if (e.oppGoal)
+                            periodScore[pd].ga += 1;
+                        else if (e.side === "team" && e.statKey === "g")
+                            periodScore[pd].gf += 1;
+                        if (pd > maxPeriod)
+                            maxPeriod = pd;
+                    });
+                });
+                const isHalves = scope === "game" && scopeGames[0] && scopeGames[0].rules && scopeGames[0].rules.periodType === "halves";
+                const baseN = isHalves ? 2 : 4;
+                const periodRows = [];
+                for (let i = 1; i <= Math.max(maxPeriod, baseN); i++) {
+                    const lab = i > baseN ? (i === baseN + 1 ? "OT" : "OT" + (i - baseN)) : (scope === "game" ? (isHalves ? "H" + i : "Q" + i) : "P" + i);
+                    const ps = periodScore[i] || { gf: 0, ga: 0 };
+                    periodRows.push([lab, ps.gf, ps.ga]);
+                }
+                const periodGf = periodRows.reduce((x, r) => x + r[1], 0);
+                const periodGa = periodRows.reduce((x, r) => x + r[2], 0);
+                const hasPeriodData = periodGf > 0 || periodGa > 0;
+                const periodTitle = scope === "game" ? (isHalves ? "Scoring by half" : "Scoring by quarter") : "Scoring by period";
                 return (React.createElement(React.Fragment, null,
                     React.createElement("div", { className: "reccard" },
                         React.createElement("div", { className: "reccard-title" },
@@ -1606,6 +1753,24 @@ function App() {
                             " (",
                             pct(pkKilled, t.pkOpp),
                             ")")),
+                    hasPeriodData && (React.createElement("div", { className: "gbg" },
+                        React.createElement("div", { className: "gbg-title" }, periodTitle),
+                        React.createElement("div", { className: "tablewrap" },
+                            React.createElement("table", { className: "table" },
+                                React.createElement("thead", null,
+                                    React.createElement("tr", null,
+                                        React.createElement("th", { className: "sticky-l2 nameth", style: { left: 0 } }, "Period"),
+                                        periodRows.map((r) => React.createElement("th", { key: r[0] }, r[0])),
+                                        React.createElement("th", null, "Tot"))),
+                                React.createElement("tbody", null,
+                                    React.createElement("tr", null,
+                                        React.createElement("td", { className: "sticky-l2 nameth", style: { left: 0 } }, "Goals for"),
+                                        periodRows.map((r) => React.createElement("td", { key: r[0], className: "hl" }, r[1])),
+                                        React.createElement("td", { className: "hl" }, periodGf)),
+                                    React.createElement("tr", null,
+                                        React.createElement("td", { className: "sticky-l2 nameth", style: { left: 0 } }, "Goals against"),
+                                        periodRows.map((r) => React.createElement("td", { key: r[0] }, r[2])),
+                                        React.createElement("td", null, periodGa))))))),
                     scope === "season" && tourneyRows.length > 0 && (React.createElement("div", { className: "gbg" },
                         React.createElement("div", { className: "gbg-title" }, "Results by tournament"),
                         React.createElement("div", { className: "tablewrap" },
@@ -1713,8 +1878,12 @@ function App() {
             React.createElement(RosterEditor, { players: roster, onAdd: addPlayer, onUpdate: updatePlayer, onDelete: deletePlayer, onSample: loadSample, color: settings.teamColor }),
             React.createElement("div", { className: "card" },
                 React.createElement("div", { className: "card-title" }, "Backup & sharing"),
-                React.createElement("button", { className: "btn btn-block", onClick: exportSeason }, "Export season (backup)"),
-                React.createElement("button", { className: "btn btn-block", onClick: () => { setImportText(""); setImportKind("season"); } }, "Restore from backup"),
+                React.createElement("button", { className: "btn btn-primary btn-block", onClick: backupToFile }, "Download backup file"),
+                React.createElement("button", { className: "btn btn-block", onClick: () => fileInputRef.current && fileInputRef.current.click() }, "Restore from file"),
+                React.createElement("input", { ref: fileInputRef, type: "file", accept: ".json,application/json,.faceoff,text/plain", style: { display: "none" }, onChange: handleRestoreFile }),
+                React.createElement("div", { className: "card-sub" }, "Backup as a code (for paste / another device)"),
+                React.createElement("button", { className: "btn btn-block", onClick: exportSeason }, "Export season code"),
+                React.createElement("button", { className: "btn btn-block", onClick: () => { setImportText(""); setImportKind("season"); } }, "Restore from code"),
                 React.createElement("div", { className: "card-sub" }, "Share your team"),
                 React.createElement("button", { className: "btn btn-block", onClick: exportRoster }, "Share roster code"),
                 React.createElement("button", { className: "btn btn-block", onClick: () => { setImportText(""); setImportKind("roster"); } }, "Import roster"),
@@ -2837,6 +3006,11 @@ const CSS = `
   display:flex; flex-direction:column; align-items:center; cursor:pointer; }
 .clock-hint { font-family:'Barlow'; font-size:8.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--dim); margin-top:1px; }
 .clock-mode { font-family:'Barlow'; font-size:9.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); margin-top:3px; text-align:center; }
+.undobar { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 14px 0; }
+.undobar-last { font-family:'Barlow'; font-size:12px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.undo-btn { flex-shrink:0; background:var(--bg3); border:1px solid var(--line); border-radius:10px; padding:7px 14px; color:var(--text); font-family:'Barlow'; font-weight:700; font-size:13px; cursor:pointer; }
+.undo-btn:active { background:#23362c; transform:scale(.97); }
+.undo-btn:disabled { opacity:.4; }
 .clock-edit { background:transparent; border:none; color:var(--dim); font-family:'Barlow'; font-size:10.5px; font-weight:600;
   letter-spacing:.04em; cursor:pointer; padding:2px 4px; margin-top:2px; text-decoration:underline; text-underline-offset:2px; }
 .clock-preview { text-align:center; font-family:'Barlow Condensed'; font-weight:800; font-size:46px; font-variant-numeric:tabular-nums;
