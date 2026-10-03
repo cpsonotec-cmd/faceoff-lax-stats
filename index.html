@@ -459,6 +459,7 @@ function App() {
     const [showGameEdit, setShowGameEdit] = useState(false);
     const [showGoaliePick, setShowGoaliePick] = useState(false);
     const [assistPrompt, setAssistPrompt] = useState(null); // { scorerId, goalEntryId, strength }
+    const [statAssign, setStatAssign] = useState(null); // { key, label } quick stat -> pick player
     const [penaltyPrompt, setPenaltyPrompt] = useState(null); // { team: 'opp' }
     const [strengthPrompt, setStrengthPrompt] = useState(null); // { entryId }
     const [showTeamEdit, setShowTeamEdit] = useState(false); // special-teams editor
@@ -1318,6 +1319,7 @@ function App() {
                     React.createElement("div", { className: "team-name", style: { color: activeGame.oppColor } }, activeGame.oppName),
                     React.createElement("div", { className: "score" }, activeGame.scores.opp),
                     React.createElement("button", { className: "opp-goal", onClick: oppGoal }, "+ Goal"))),
+            React.createElement("div", { className: "quickbar" }, [["ct", "CTO"], ["to", "TO"], ["gb", "GB"], ["sog", "SOG"], ["ms", "Shot"]].map(([key, label]) => (React.createElement("button", { key: key, className: "qchip", onClick: () => setStatAssign({ key, label }) }, label)))),
             React.createElement("div", { className: "qbar" }, periodLabels(rules).map((lab, i) => {
                 const val = i + 1;
                 return (React.createElement("button", { key: lab, className: `qbtn ${activeGame.period === val ? "qbtn-on" : ""}`, onClick: () => setPeriod(val) }, lab));
@@ -1896,6 +1898,16 @@ function App() {
                         React.createElement("span", { className: "assist-name" }, p.name || "—"))))),
                     React.createElement("button", { className: "btn btn-block", onClick: () => setAssistPrompt(null) }, "Unassisted"))));
         })(),
+        statAssign && (React.createElement("div", { className: "overlay", onClick: () => setStatAssign(null) },
+            React.createElement("div", { className: "sheet tall", onClick: (e) => e.stopPropagation() },
+                React.createElement("div", { className: "sheet-head" },
+                    React.createElement("div", { className: "sheet-name" },
+                        React.createElement("div", { className: "sheet-pn" }, statAssign.label),
+                        React.createElement("div", { className: "sheet-pts" }, "Who gets it? Tap a player.")),
+                    React.createElement("button", { className: "sheet-done", onClick: () => setStatAssign(null) }, "Cancel")),
+                React.createElement("div", { className: "assist-grid" }, roster.map((p) => (React.createElement("button", { key: p.id, className: "assist-btn", onClick: () => { logStat(p, STAT_BY_KEY[statAssign.key]); setStatAssign(null); } },
+                    React.createElement("span", { className: "assist-num" }, p.num),
+                    React.createElement("span", { className: "assist-name" }, p.name || "—")))))))),
         penaltyPrompt && (React.createElement("div", { className: "overlay", onClick: () => setPenaltyPrompt(null) },
             React.createElement("div", { className: "sheet", onClick: (e) => e.stopPropagation() },
                 React.createElement("div", { className: "sheet-head" },
@@ -2759,6 +2771,10 @@ const CSS = `
 .opp-goal:active { background:var(--bg3); }
 
 /* periods */
+.quickbar { display:flex; gap:6px; padding:8px 14px 0; }
+.qchip { flex:1; background:var(--bg3); border:1px solid var(--line); border-radius:10px; padding:11px 4px;
+  color:var(--text); font-family:'Barlow Condensed'; font-weight:700; font-size:15px; letter-spacing:.03em; cursor:pointer; }
+.qchip:active { background:#23362c; transform:scale(.96); }
 .qbar { display:flex; gap:6px; padding:10px 14px 4px; }
 .qbtn { flex:1; background:var(--bg2); color:var(--dim); border:1px solid var(--line); border-radius:10px; padding:9px 0;
   font-family:'Barlow Condensed'; font-weight:700; font-size:15px; letter-spacing:.05em; cursor:pointer; }
