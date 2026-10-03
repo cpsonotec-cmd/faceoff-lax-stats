@@ -156,12 +156,13 @@ const initialState = {
     games: [], // see makeGame
     activeGameId: null,
 };
-const makeGame = ({ tournamentId = null, oppName = "Opponent", oppColor = "#FF7A45", goalieId = null, scrimmage = false }) => ({
+const makeGame = ({ tournamentId = null, oppName = "Opponent", oppColor = "#FF7A45", goalieId = null, scrimmage = false, rules = null }) => ({
     id: uid(),
     tournamentId,
     oppName,
     oppColor,
     scrimmage, // true = practice/scrimmage, excluded from season totals unless included
+    rules, // per-game rules {periodType, periodLength, otLength, running}; null = use team defaults
     date: today(),
     status: "live", // live | final
     period: 1,
@@ -581,8 +582,10 @@ function App() {
         }
         return () => clearTimeout(saveTimer.current);
     }, [state, loaded]);
-    const { settings, rules, roster, tournaments, games } = state;
+    const { settings, roster, tournaments, games } = state;
     const activeGame = games.find((g) => g.id === state.activeGameId) || null;
+    // each game can carry its own rules (chosen at creation); fall back to team defaults
+    const rules = (activeGame && activeGame.rules) || state.rules;
     // clock: countdown from configured period length; reset on game/period/rules change
     useEffect(() => {
         setRunning(false);
@@ -1377,7 +1380,7 @@ function App() {
                         React.createElement("span", { className: "teamline-dot", style: { background: settings.teamColor } }),
                         React.createElement("span", { className: "teamline-name" }, settings.teamName || "Express"),
                         React.createElement("span", { className: "teamline-stats" }, "assign to a player")),
-                    React.createElement("div", { className: "quickbar" }, [["ct", "CTO"], ["to", "TO"], ["gb", "GB"], ["sog", "SOG"], ["ms", "Shot"]].map(([key, label]) => (React.createElement("button", { key: key, className: "qchip", onClick: () => setStatAssign({ key, label }) }, label))))),
+                    React.createElement("div", { className: "quickbar" }, [["ct", "CTO"], ["to", "TO"], ["gb", "GB"], ["sog", "SOG"], ["ms", "Shot"], ["fw", "FOW"], ["fl", "FOL"]].map(([key, label]) => (React.createElement("button", { key: key, className: "qchip", onClick: () => setStatAssign({ key, label }) }, label))))),
                 React.createElement("div", { className: "teamline" },
                     React.createElement("div", { className: "teamline-head" },
                         React.createElement("span", { className: "teamline-dot", style: { background: activeGame.oppColor } }),
@@ -1665,15 +1668,15 @@ function App() {
                 React.createElement("input", { className: "field", value: settings.teamName, onChange: (e) => setSetting("teamName", e.target.value) }),
                 React.createElement("div", { className: "swatches" }, COLOR_PRESETS.map((c) => (React.createElement("button", { key: c, className: `swatch ${settings.teamColor === c ? "swatch-on" : ""}`, style: { background: c }, onClick: () => setSetting("teamColor", c), "aria-label": `color ${c}` }))))),
             React.createElement("div", { className: "card" },
-                React.createElement("div", { className: "card-title" }, "Game rules"),
+                React.createElement("div", { className: "card-title" }, "Game rules (defaults for new games)"),
                 React.createElement("label", { className: "field-label" }, "Format"),
-                React.createElement("div", { className: "seg" }, [["quarters", "4 Quarters"], ["halves", "2 Halves"]].map(([v, lab]) => (React.createElement("button", { key: v, className: `seg-btn ${rules.periodType === v ? "seg-on" : ""}`, onClick: () => setRule("periodType", v) }, lab)))),
+                React.createElement("div", { className: "seg" }, [["quarters", "4 Quarters"], ["halves", "2 Halves"]].map(([v, lab]) => (React.createElement("button", { key: v, className: `seg-btn ${state.rules.periodType === v ? "seg-on" : ""}`, onClick: () => setRule("periodType", v) }, lab)))),
                 React.createElement("div", { className: "rule-row" },
-                    React.createElement("span", { className: "rule-label" }, rules.periodType === "halves" ? "Half length" : "Quarter length"),
-                    React.createElement(Stepper, { value: rules.periodLength, min: 1, max: 30, onChange: (v) => setRule("periodLength", v), suffix: "min" })),
+                    React.createElement("span", { className: "rule-label" }, state.rules.periodType === "halves" ? "Half length" : "Quarter length"),
+                    React.createElement(Stepper, { value: state.rules.periodLength, min: 1, max: 30, onChange: (v) => setRule("periodLength", v), suffix: "min" })),
                 React.createElement("div", { className: "rule-row" },
                     React.createElement("span", { className: "rule-label" }, "Overtime length"),
-                    React.createElement(Stepper, { value: rules.otLength, min: 1, max: 20, onChange: (v) => setRule("otLength", v), suffix: "min" })),
+                    React.createElement(Stepper, { value: state.rules.otLength, min: 1, max: 20, onChange: (v) => setRule("otLength", v), suffix: "min" })),
                 React.createElement("p", { className: "legend", style: { marginTop: 4 } }, "Sets the period buttons and the countdown clock. Changing this resets the running clock.")),
             React.createElement(RosterEditor, { players: roster, onAdd: addPlayer, onUpdate: updatePlayer, onDelete: deletePlayer, onSample: loadSample, color: settings.teamColor }),
             React.createElement("div", { className: "card" },
@@ -2617,8 +2620,12 @@ function ScheduleView({ state, onCreateGame, onCreateTournament, onOpenGame, onD
     const [tid, setTid] = useState(null);
     const [tname, setTname] = useState("");
     const [scrim, setScrim] = useState(false);
+    const [gPeriodType, setGPeriodType] = useState(state.rules.periodType);
+    const [gLen, setGLen] = useState(state.rules.periodLength);
+    const [gRunning, setGRunning] = useState(false);
     function start() {
-        onCreateGame({ tournamentId: tid, oppName: opp.trim() || "Opponent", oppColor: color, scrimmage: scrim });
+        const rules = { periodType: gPeriodType, periodLength: gLen, otLength: state.rules.otLength, running: gRunning };
+        onCreateGame({ tournamentId: tid, oppName: opp.trim() || "Opponent", oppColor: color, scrimmage: scrim, rules });
         setOpp("");
     }
     function addTournament() {
@@ -2653,7 +2660,15 @@ function ScheduleView({ state, onCreateGame, onCreateTournament, onOpenGame, onD
             React.createElement("div", { className: "chiprow" },
                 React.createElement("button", { className: `tchip ${tid === null ? "tchip-on" : ""}`, onClick: () => setTid(null) }, "None"),
                 tournaments.map((t) => (React.createElement("button", { key: t.id, className: `tchip ${tid === t.id ? "tchip-on" : ""}`, onClick: () => setTid(t.id) }, t.name)))),
-            React.createElement("label", { className: "row-toggle", style: { marginTop: 12 } },
+            React.createElement("label", { className: "field-label", style: { marginTop: 12 } }, "Format"),
+            React.createElement("div", { className: "seg" }, [["quarters", "4 Quarters"], ["halves", "2 Halves"]].map(([v, lab]) => (React.createElement("button", { key: v, className: `seg-btn ${gPeriodType === v ? "seg-on" : ""}`, onClick: () => setGPeriodType(v) }, lab)))),
+            React.createElement("div", { className: "rule-row" },
+                React.createElement("span", { className: "rule-label" }, gPeriodType === "halves" ? "Half length" : "Quarter length"),
+                React.createElement(Stepper, { value: gLen, min: 1, max: 30, onChange: setGLen, suffix: "min" })),
+            React.createElement("label", { className: "row-toggle" },
+                React.createElement("span", null, "Running clock (clock keeps running on stoppages)"),
+                React.createElement("input", { type: "checkbox", checked: gRunning, onChange: (e) => setGRunning(e.target.checked) })),
+            React.createElement("label", { className: "row-toggle" },
                 React.createElement("span", null, "Scrimmage (won't count toward season unless you include it)"),
                 React.createElement("input", { type: "checkbox", checked: scrim, onChange: (e) => setScrim(e.target.checked) })),
             React.createElement("button", { className: "btn btn-primary btn-block", onClick: start },
@@ -2794,8 +2809,8 @@ const CSS = `
 .opp-goal:active { background:var(--bg3); }
 
 /* periods */
-.quickbar { display:flex; gap:6px; padding:0 2px; }
-.qchip { flex:1; background:var(--bg3); border:1px solid var(--line); border-radius:10px; padding:11px 4px;
+.quickbar { display:flex; flex-wrap:wrap; gap:6px; padding:0 2px; }
+.qchip { flex:1 1 56px; min-width:56px; background:var(--bg3); border:1px solid var(--line); border-radius:10px; padding:11px 4px;
   color:var(--text); font-family:'Barlow Condensed'; font-weight:700; font-size:15px; letter-spacing:.03em; cursor:pointer; }
 .qchip:active { background:#23362c; transform:scale(.96); }
 .qbar { display:flex; gap:6px; padding:10px 14px 4px; }
