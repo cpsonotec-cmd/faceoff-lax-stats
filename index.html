@@ -129,6 +129,17 @@ const VOICE_RULES = [
     ["sog", ["shot on goal", "on goal", "sog", "shot"]],
     ["g", ["goal", "goals", "score", "scored"]],
 ];
+// spoken abbreviations (whole-word), checked only if no full phrase matched
+const VOICE_ABBR = [
+    ["gb", ["gb", "g b"]],
+    ["ct", ["cto", "c t o"]],
+    ["fw", ["fow", "f o w"]],
+    ["fl", ["fol", "f o l"]],
+    ["sog", ["sog", "s o g"]],
+    ["db", ["db", "d b"]],
+    ["ms", ["ms"]],
+    ["to", ["to", "t o"]], // handled specially: must lead the command (avoid the filler word "to")
+];
 function parseVoice(text) {
     const t = " " + (text || "").toLowerCase().replace(/[^a-z0-9\s-]/g, "") + " ";
     const dig = t.match(/\d+/);
@@ -144,6 +155,25 @@ function parseVoice(text) {
         if (phrases.some((p) => t.includes(p))) {
             key = k;
             break;
+        }
+    }
+    if (!key) {
+        const trimmed = t.trim();
+        for (const [k, toks] of VOICE_ABBR) {
+            for (const tok of toks) {
+                if (k === "to") {
+                    if (trimmed === tok || trimmed.startsWith(tok + " ")) {
+                        key = k;
+                        break;
+                    }
+                }
+                else if (t.includes(" " + tok + " ")) {
+                    key = k;
+                    break;
+                }
+            }
+            if (key)
+                break;
         }
     }
     return { key, num, strength, opp };
