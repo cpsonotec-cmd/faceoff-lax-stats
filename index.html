@@ -1307,7 +1307,10 @@ function App() {
                         " \u00B7 vs ",
                         activeGame.oppName),
                     React.createElement("span", { className: "gh-pencil" }, "\u270E")),
-                React.createElement("button", { className: `chip ${activeGame.status === "final" ? "chip-final" : "chip-live"}`, onClick: () => setGameStatus(activeGame.id, activeGame.status === "final" ? "live" : "final") }, activeGame.status === "final" ? "Final" : "Live · tap to end")),
+                React.createElement("div", { className: "gh-actions" },
+                    React.createElement("button", { className: "gh-act", onClick: () => setTab("schedule") }, "Exit"),
+                    React.createElement("button", { className: `chip ${activeGame.status === "final" ? "chip-final" : "chip-live"}`, onClick: () => setGameStatus(activeGame.id, activeGame.status === "final" ? "live" : "final") }, activeGame.status === "final" ? "Final" : "Live"),
+                    React.createElement("button", { className: "gh-act gh-del", onClick: () => deleteGame(activeGame.id) }, "Delete"))),
             React.createElement("section", { className: "scoreboard" },
                 React.createElement("div", { className: "team-block", style: { borderColor: settings.teamColor } },
                     React.createElement("div", { className: "team-name", style: { color: settings.teamColor } }, settings.teamName),
@@ -2760,6 +2763,9 @@ const CSS = `
 .gh-tourney { font-family:'Barlow Condensed'; font-weight:700; font-size:13px; letter-spacing:.05em;
   text-transform:uppercase; color:var(--gold); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .gh-date { font-size:12px; color:var(--dim); }
+.gh-actions { display:flex; align-items:center; gap:7px; }
+.gh-act { background:var(--bg3); border:1px solid var(--line); color:var(--text); font-weight:700; font-size:12px; border-radius:8px; padding:6px 10px; cursor:pointer; }
+.gh-del { color:#FF7A7A; border-color:rgba(255,122,122,.35); }
 .chip { border:1px solid var(--line); border-radius:999px; padding:5px 12px; font-size:12px; font-weight:600;
   cursor:pointer; background:var(--bg2); color:var(--text); white-space:nowrap; }
 .chip-live { color:var(--gold); border-color:rgba(255,194,71,.4); }
