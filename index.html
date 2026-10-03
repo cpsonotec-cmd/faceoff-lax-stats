@@ -454,6 +454,17 @@ function App() {
     const [cloud, setCloud] = useState(getCloudCfg());
     const [syncMsg, setSyncMsg] = useState("");
     const pushTimer = useRef(null);
+    const urlRef = useRef(null), keyRef = useRef(null), teamRef = useRef(null);
+    // read the live field values straight from the inputs (beats iOS autofill not firing onChange)
+    function readCloudFields() {
+        const url = ((urlRef.current && urlRef.current.value) || cloud.url || "").trim();
+        const key = ((keyRef.current && keyRef.current.value) || cloud.key || "").trim();
+        const team = ((teamRef.current && teamRef.current.value) || cloud.team || "").trim();
+        const cfg = { url, key, team, enabled: true };
+        saveCloudCfg(cfg);
+        setCloud(cfg);
+        return cfg;
+    }
     const [listening, setListening] = useState(false);
     const [voiceMsg, setVoiceMsg] = useState("");
     const [secLeft, setSecLeft] = useState(0);
@@ -494,8 +505,7 @@ function App() {
     // Use the on-screen values (the `cloud` state), so the buttons work even when
     // browser storage is flaky. Fall back to stored config for the auto-push.
     async function syncPushNow(showToast) {
-        const cfg = { ...getCloudCfg(), ...cloud };
-        saveCloudCfg(cfg);
+        const cfg = showToast ? readCloudFields() : { ...getCloudCfg(), ...cloud };
         const url = (cfg.url || "").trim(), team = (cfg.team || "").trim(), key = (cfg.key || "").trim();
         if (!url || !team || !key) {
             if (showToast) {
@@ -518,8 +528,7 @@ function App() {
         }
     }
     async function syncPullNow() {
-        const cfg = { ...getCloudCfg(), ...cloud };
-        saveCloudCfg(cfg);
+        const cfg = readCloudFields();
         const url = (cfg.url || "").trim(), team = (cfg.team || "").trim(), key = (cfg.key || "").trim();
         if (!url || !team || !key) {
             setSyncMsg("Enter Supabase URL, key, and team key first");
@@ -1652,11 +1661,11 @@ function App() {
                 React.createElement("div", { className: "card-title" }, "Cloud sync (Supabase)"),
                 React.createElement("p", { className: "legend", style: { marginTop: 0 } }, "Back up and sync across devices to your Supabase database. The app stays offline-first; changes push to Supabase when connected."),
                 React.createElement("label", { className: "fld-label" }, "Supabase URL"),
-                React.createElement("input", { className: "field", placeholder: "https://xxxxxxxx.supabase.co", value: cloud.url, onChange: (e) => { const c = { ...cloud, url: e.target.value.trim() }; setCloud(c); saveCloudCfg(c); }, autoCapitalize: "off", autoCorrect: "off" }),
+                React.createElement("input", { ref: urlRef, className: "field", placeholder: "https://xxxxxxxx.supabase.co", defaultValue: cloud.url, onChange: (e) => { const c = { ...cloud, url: e.target.value.trim() }; setCloud(c); saveCloudCfg(c); }, autoCapitalize: "off", autoCorrect: "off", autoComplete: "off" }),
                 React.createElement("label", { className: "fld-label" }, "Supabase anon key"),
-                React.createElement("input", { className: "field", placeholder: "eyJhbGciOi...", value: cloud.key, type: "password", onChange: (e) => { const c = { ...cloud, key: e.target.value.trim() }; setCloud(c); saveCloudCfg(c); }, autoCapitalize: "off", autoCorrect: "off" }),
+                React.createElement("input", { ref: keyRef, className: "field", placeholder: "eyJhbGciOi...", defaultValue: cloud.key, type: "password", onChange: (e) => { const c = { ...cloud, key: e.target.value.trim() }; setCloud(c); saveCloudCfg(c); }, autoCapitalize: "off", autoCorrect: "off", autoComplete: "off" }),
                 React.createElement("label", { className: "fld-label" }, "Team key"),
-                React.createElement("input", { className: "field", placeholder: "express-east-2034", value: cloud.team, onChange: (e) => { const c = { ...cloud, team: e.target.value.trim() }; setCloud(c); saveCloudCfg(c); }, autoCapitalize: "off", autoCorrect: "off" }),
+                React.createElement("input", { ref: teamRef, className: "field", placeholder: "express-east-2034", defaultValue: cloud.team, onChange: (e) => { const c = { ...cloud, team: e.target.value.trim() }; setCloud(c); saveCloudCfg(c); }, autoCapitalize: "off", autoCorrect: "off", autoComplete: "off" }),
                 React.createElement("label", { className: "row-toggle", style: { marginTop: 10 } },
                     React.createElement("span", null, "Enable sync"),
                     React.createElement("input", { type: "checkbox", checked: !!cloud.enabled, onChange: (e) => { const c = { ...cloud, enabled: e.target.checked }; setCloud(c); saveCloudCfg(c); } })),
