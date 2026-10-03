@@ -1309,8 +1309,7 @@ function App() {
                     React.createElement("span", { className: "gh-pencil" }, "\u270E")),
                 React.createElement("div", { className: "gh-actions" },
                     React.createElement("button", { className: "gh-act", onClick: () => setTab("schedule") }, "Exit"),
-                    React.createElement("button", { className: `chip ${activeGame.status === "final" ? "chip-final" : "chip-live"}`, onClick: () => setGameStatus(activeGame.id, activeGame.status === "final" ? "live" : "final") }, activeGame.status === "final" ? "Final" : "Live"),
-                    React.createElement("button", { className: "gh-act gh-del", onClick: () => deleteGame(activeGame.id) }, "Delete"))),
+                    React.createElement("button", { className: `chip ${activeGame.status === "final" ? "chip-final" : "chip-live"}`, onClick: () => setGameStatus(activeGame.id, activeGame.status === "final" ? "live" : "final") }, activeGame.status === "final" ? "Final" : "Live"))),
             React.createElement("section", { className: "scoreboard" },
                 React.createElement("div", { className: "team-block", style: { borderColor: settings.teamColor } },
                     React.createElement("div", { className: "team-name", style: { color: settings.teamColor } }, settings.teamName),
@@ -1329,6 +1328,9 @@ function App() {
                 const val = i + 1;
                 return (React.createElement("button", { key: lab, className: `qbtn ${activeGame.period === val ? "qbtn-on" : ""}`, onClick: () => setPeriod(val) }, lab));
             })),
+            React.createElement("div", { className: "gameacts" },
+                React.createElement("button", { className: "btn btn-sm btn-danger", onClick: () => deleteGame(activeGame.id) }, "Delete"),
+                React.createElement("button", { className: "btn btn-sm btn-primary", onClick: saveGame }, "Save game")),
             React.createElement("div", { className: "voicebar" },
                 React.createElement("button", { className: `mic ${listening ? "mic-on" : ""}`, onClick: toggleVoice, disabled: !voiceSupported },
                     React.createElement("span", { className: "mic-dot" }),
@@ -1395,10 +1397,7 @@ function App() {
                         React.createElement("button", { className: "qbtn2", onClick: () => logOppStat("ms", "Miss") }, "Miss"),
                         React.createElement("button", { className: "qbtn2", onClick: () => setPenaltyPrompt({ team: "opp" }) }, "Penalty"))),
                 React.createElement("div", { className: "teamline-actions" },
-                    React.createElement("button", { className: "linkbtn", onClick: () => setShowTeamEdit(true) }, "Edit man-up / penalty kill"),
-                    React.createElement("div", { style: { display: "flex", gap: 8 } },
-                        React.createElement("button", { className: "btn btn-sm btn-danger", onClick: () => deleteGame(activeGame.id) }, "Delete"),
-                        React.createElement("button", { className: "btn btn-sm btn-primary", onClick: saveGame }, "Save game")))),
+                    React.createElement("button", { className: "linkbtn", onClick: () => setShowTeamEdit(true) }, "Edit man-up / penalty kill"))),
             roster.length === 0 ? (React.createElement("div", { className: "empty" },
                 React.createElement("div", { className: "empty-title" }, "No players yet"),
                 React.createElement("p", { className: "empty-body" }, "Add your roster in Setup to start logging stats."),
@@ -2766,6 +2765,8 @@ const CSS = `
 .gh-actions { display:flex; align-items:center; gap:7px; }
 .gh-act { background:var(--bg3); border:1px solid var(--line); color:var(--text); font-weight:700; font-size:12px; border-radius:8px; padding:6px 10px; cursor:pointer; }
 .gh-del { color:#FF7A7A; border-color:rgba(255,122,122,.35); }
+.gameacts { display:flex; gap:8px; padding:8px 14px 0; }
+.gameacts .btn { flex:1; }
 .chip { border:1px solid var(--line); border-radius:999px; padding:5px 12px; font-size:12px; font-weight:600;
   cursor:pointer; background:var(--bg2); color:var(--text); white-space:nowrap; }
 .chip-live { color:var(--gold); border-color:rgba(255,194,71,.4); }
