@@ -465,8 +465,10 @@ function App() {
     const [showTeamEdit, setShowTeamEdit] = useState(false); // special-teams editor
     const [showReport, setShowReport] = useState(false); // printable report
     const [showSelfCheck, setShowSelfCheck] = useState(false); // stat-engine self-check
-    const [confirmBox, setConfirmBox] = useState(null); // { message, onConfirm } in-app confirm
-    function askConfirm(message, onConfirm) { setConfirmBox({ message, onConfirm }); }
+    const [confirmBox, setConfirmBox] = useState(null); // { message, onConfirm, requireType? }
+    const [confirmType, setConfirmType] = useState(""); // text typed into a type-to-confirm box
+    function askConfirm(message, onConfirm) { setConfirmType(""); setConfirmBox({ message, onConfirm }); }
+    function askConfirmTyped(message, onConfirm) { setConfirmType(""); setConfirmBox({ message, onConfirm, requireType: "delete" }); }
     const [cloud, setCloud] = useState(getCloudCfg());
     const [syncMsg, setSyncMsg] = useState("");
     const pushTimer = useRef(null);
@@ -834,12 +836,13 @@ function App() {
     }
     function setActiveGame(id) { setState((prev) => ({ ...prev, activeGameId: id })); setTab("game"); }
     function deleteGame(id) {
-        askConfirm("Delete this game and its stats?", () => {
+        askConfirmTyped("Delete this game and all its stats? This cannot be undone. Type delete to confirm.", () => {
             setState((prev) => ({
                 ...prev,
                 games: prev.games.filter((g) => g.id !== id),
                 activeGameId: prev.activeGameId === id ? null : prev.activeGameId,
             }));
+            toast("Game deleted");
         });
     }
     function deleteTournament(id) {
@@ -872,7 +875,7 @@ function App() {
     function setSetting(field, val) { setState((prev) => ({ ...prev, settings: { ...prev.settings, [field]: val } })); }
     function setRule(field, val) { setState((prev) => ({ ...prev, rules: { ...prev.rules, [field]: val } })); }
     function resetAll() {
-        askConfirm("Erase the entire season — roster, tournaments, and all games?", () => {
+        askConfirmTyped("Erase the entire season — roster, tournaments, and all games? This cannot be undone. Type delete to confirm.", () => {
             setState(initialState);
             toast("Season reset");
         });
@@ -1390,7 +1393,9 @@ function App() {
                         React.createElement("button", { className: "qbtn2", onClick: () => setPenaltyPrompt({ team: "opp" }) }, "Penalty"))),
                 React.createElement("div", { className: "teamline-actions" },
                     React.createElement("button", { className: "linkbtn", onClick: () => setShowTeamEdit(true) }, "Edit man-up / penalty kill"),
-                    React.createElement("button", { className: "btn btn-sm btn-primary", onClick: saveGame }, "Save game"))),
+                    React.createElement("div", { style: { display: "flex", gap: 8 } },
+                        React.createElement("button", { className: "btn btn-sm btn-danger", onClick: () => deleteGame(activeGame.id) }, "Delete"),
+                        React.createElement("button", { className: "btn btn-sm btn-primary", onClick: saveGame }, "Save game")))),
             roster.length === 0 ? (React.createElement("div", { className: "empty" },
                 React.createElement("div", { className: "empty-title" }, "No players yet"),
                 React.createElement("p", { className: "empty-body" }, "Add your roster in Setup to start logging stats."),
@@ -1989,13 +1994,19 @@ function App() {
                             React.createElement("span", { className: "sc-val" }, r.pass ? String(r.got) : `${r.got} ≠ ${r.exp}`)))),
                         s.note && React.createElement("p", { className: "legend", style: { margin: "6px 2px 0" } }, s.note)))))));
         })(),
-        confirmBox && (React.createElement("div", { className: "overlay", onClick: () => setConfirmBox(null) },
-            React.createElement("div", { className: "sheet", onClick: (e) => e.stopPropagation() },
-                React.createElement("div", { className: "confirm-msg" }, confirmBox.message),
-                React.createElement("div", { className: "modal-btns" },
-                    React.createElement("button", { className: "btn", onClick: () => setConfirmBox(null) }, "Cancel"),
-                    React.createElement("button", { className: "btn btn-danger", onClick: () => { const f = confirmBox.onConfirm; setConfirmBox(null); if (f)
-                            f(); } }, "Confirm"))))),
+        confirmBox && (() => {
+            const needType = confirmBox.requireType;
+            const ok = !needType || confirmType.trim().toLowerCase() === needType;
+            return (React.createElement("div", { className: "overlay", onClick: () => setConfirmBox(null) },
+                React.createElement("div", { className: "sheet", onClick: (e) => e.stopPropagation() },
+                    React.createElement("div", { className: "confirm-msg" }, confirmBox.message),
+                    needType && (React.createElement("input", { className: "field", autoFocus: true, placeholder: `type "${needType}"`, value: confirmType, autoCapitalize: "off", autoCorrect: "off", onChange: (e) => setConfirmType(e.target.value), style: { marginBottom: 12 } })),
+                    React.createElement("div", { className: "modal-btns" },
+                        React.createElement("button", { className: "btn", onClick: () => setConfirmBox(null) }, "Cancel"),
+                        React.createElement("button", { className: "btn btn-danger", disabled: !ok, onClick: () => { if (!ok)
+                                return; const f = confirmBox.onConfirm; setConfirmBox(null); setConfirmType(""); if (f)
+                                f(); } }, needType ? "Delete" : "Confirm")))));
+        })(),
         toastMsg && React.createElement("div", { className: "toast" }, toastMsg)));
 }
 /* ----------------------- printable report ----------------------- */
@@ -2962,6 +2973,7 @@ const CSS = `
 .btn-sm { padding:8px 14px; font-size:13px; }
 .btn-block { display:block; width:100%; margin-top:12px; }
 .btn-danger { color:#FF7A7A; border-color:rgba(255,122,122,.3); background:rgba(255,122,122,.06); }
+.btn:disabled { opacity:.4; }
 
 /* tab bar */
 .tabbar { position:fixed; bottom:0; left:50%; transform:translateX(-50%); width:100%; max-width:520px; display:flex;
