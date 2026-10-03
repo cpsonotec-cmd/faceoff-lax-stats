@@ -1322,6 +1322,12 @@ function App() {
                     React.createElement("button", { className: "clock", onClick: () => setRunning((r) => !r), onDoubleClick: () => { setRunning(false); const len = activeGame.period === otIndexFor(rules) ? rules.otLength : rules.periodLength; setSecLeft(len * 60); }, title: "Tap start/pause \u00B7 double-tap reset" },
                         mmss,
                         React.createElement("span", { className: "clock-hint" }, running ? "running" : "tap")),
+                    React.createElement("span", { className: "clock-mode" },
+                        rules.running ? "Running clock" : "Stop clock",
+                        " \u00B7 ",
+                        rules.periodLength,
+                        "\u2032 ",
+                        rules.periodType === "halves" ? "halves" : "quarters"),
                     React.createElement("button", { className: "clock-edit", onClick: openClockEdit }, "Edit time")),
                 React.createElement("div", { className: "team-block", style: { borderColor: activeGame.oppColor } },
                     React.createElement("div", { className: "team-name", style: { color: activeGame.oppColor } }, activeGame.oppName),
@@ -2800,6 +2806,7 @@ const CSS = `
   background:var(--bg3); color:var(--text); border:1px solid var(--line); border-radius:10px; padding:6px 8px 4px;
   display:flex; flex-direction:column; align-items:center; cursor:pointer; }
 .clock-hint { font-family:'Barlow'; font-size:8.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--dim); margin-top:1px; }
+.clock-mode { font-family:'Barlow'; font-size:9.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); margin-top:3px; text-align:center; }
 .clock-edit { background:transparent; border:none; color:var(--dim); font-family:'Barlow'; font-size:10.5px; font-weight:600;
   letter-spacing:.04em; cursor:pointer; padding:2px 4px; margin-top:2px; text-decoration:underline; text-underline-offset:2px; }
 .clock-preview { text-align:center; font-family:'Barlow Condensed'; font-weight:800; font-size:46px; font-variant-numeric:tabular-nums;
