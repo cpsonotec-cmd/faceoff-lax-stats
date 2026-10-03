@@ -45,6 +45,27 @@ const POSITIONS = [
     { key: "G", label: "Goalie" },
 ];
 const posLabel = (k) => (POSITIONS.find((p) => p.key === k) || {}).label || "";
+// color per position group, used in the player picker
+const POS_COLOR = { A: "#E5484D", M: "#4C8DFF", LSM: "#A371F7", D: "#30A46C", G: "#E2A50E", "": "#8AA597" };
+const PICK_GROUPS = [["A", "Attack"], ["M", "Midfield"], ["LSM", "LSM"], ["D", "Defense"], ["G", "Goalie"], ["", "Other"]];
+const KNOWN_POS = ["A", "M", "LSM", "D", "G"];
+// grouped, color-coded grid of player buttons for the pop-up pickers
+function PickGrid({ players, onPick }) {
+    const groups = PICK_GROUPS
+        .map(([code, label]) => ({
+        code, label, color: POS_COLOR[code],
+        list: players.filter((p) => (code === "" ? !KNOWN_POS.includes(p.pos) : p.pos === code)),
+    }))
+        .filter((g) => g.list.length);
+    return (React.createElement("div", { className: "pickwrap" }, groups.map((g) => (React.createElement("div", { className: "pick-group", key: g.label },
+        React.createElement("div", { className: "pick-group-h", style: { color: g.color } },
+            React.createElement("span", { className: "pick-dot", style: { background: g.color } }),
+            g.label,
+            React.createElement("span", { className: "pick-count" }, g.list.length)),
+        React.createElement("div", { className: "assist-grid" }, g.list.map((p) => (React.createElement("button", { key: p.id, className: "assist-btn", style: { borderTop: `3px solid ${g.color}` }, onClick: () => onPick(p) },
+            React.createElement("span", { className: "assist-num", style: { color: g.color } }, p.num),
+            React.createElement("span", { className: "assist-name" }, p.name || "—"))))))))));
+}
 // quick-log buttons shown on each player's card, by position
 const QUICK_LABEL = { g: "Goal", a: "Assist", gb: "GB", to: "TO", ct: "CT", sv: "Save", db: "DB" };
 function quickStatsFor(pos) {
@@ -2300,9 +2321,7 @@ function App() {
                                 " \u2014 who assisted?")),
                         React.createElement("button", { className: "sheet-done", onClick: () => setAssistPrompt(null) }, "Skip")),
                     React.createElement("div", { className: "str-row" }, STRENGTHS.map((s) => (React.createElement("button", { key: s.key, className: `str-chip ${assistPrompt.strength === s.key ? "str-on" : ""}`, onClick: () => { setGoalStrength(assistPrompt.goalEntryId, s.key); setAssistPrompt({ ...assistPrompt, strength: s.key }); } }, s.label)))),
-                    React.createElement("div", { className: "assist-grid" }, roster.filter((p) => p.id !== assistPrompt.scorerId).map((p) => (React.createElement("button", { key: p.id, className: "assist-btn", onClick: () => { logStat(p, STAT_BY_KEY.a); setAssistPrompt(null); } },
-                        React.createElement("span", { className: "assist-num" }, p.num),
-                        React.createElement("span", { className: "assist-name" }, p.name || "—"))))),
+                    React.createElement(PickGrid, { players: roster.filter((p) => p.id !== assistPrompt.scorerId), onPick: (p) => { logStat(p, STAT_BY_KEY.a); setAssistPrompt(null); } }),
                     React.createElement("button", { className: "btn btn-block", onClick: () => setAssistPrompt(null) }, "Unassisted"))));
         })(),
         statAssign && (React.createElement("div", { className: "overlay", onClick: () => setStatAssign(null) },
@@ -2312,13 +2331,11 @@ function App() {
                         React.createElement("div", { className: "sheet-pn" }, statAssign.label),
                         React.createElement("div", { className: "sheet-pts" }, statAssign.who || "Who gets it? Tap a player.")),
                     React.createElement("button", { className: "sheet-done", onClick: () => setStatAssign(null) }, "Cancel")),
-                React.createElement("div", { className: "assist-grid" },
-                    statAssign.teamKey && (React.createElement("button", { className: "assist-btn assist-btn-alt", onClick: () => { logTeamStat(statAssign.teamKey, statAssign.label); setStatAssign(null); } },
+                statAssign.teamKey && (React.createElement("div", { className: "assist-grid", style: { marginBottom: 8 } },
+                    React.createElement("button", { className: "assist-btn assist-btn-alt", onClick: () => { logTeamStat(statAssign.teamKey, statAssign.label); setStatAssign(null); } },
                         React.createElement("span", { className: "assist-num" }, "\u2014"),
-                        React.createElement("span", { className: "assist-name" }, "Team only"))),
-                    roster.map((p) => (React.createElement("button", { key: p.id, className: "assist-btn", onClick: () => assignStat(p) },
-                        React.createElement("span", { className: "assist-num" }, p.num),
-                        React.createElement("span", { className: "assist-name" }, p.name || "—")))))))),
+                        React.createElement("span", { className: "assist-name" }, "Team only")))),
+                React.createElement(PickGrid, { players: roster, onPick: assignStat })))),
         penaltyPrompt && (React.createElement("div", { className: "overlay", onClick: () => setPenaltyPrompt(null) },
             React.createElement("div", { className: "sheet", onClick: (e) => e.stopPropagation() },
                 React.createElement("div", { className: "sheet-head" },
@@ -3310,6 +3327,12 @@ const CSS = `
 .table td.pctcell { color:var(--dim); font-weight:600; }
 .table th.grp, .table td.grp { border-left:2px solid rgba(255,255,255,0.22); padding-left:12px; }
 .assist-grid { display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; margin-bottom:14px; }
+.pickwrap { margin-bottom:6px; }
+.pick-group { margin-bottom:10px; }
+.pick-group-h { display:flex; align-items:center; gap:7px; font-family:'Barlow Condensed'; font-weight:800; font-size:14px; letter-spacing:.08em; text-transform:uppercase; margin:2px 2px 7px; }
+.pick-dot { width:10px; height:10px; border-radius:3px; flex-shrink:0; }
+.pick-count { margin-left:auto; font-family:'Barlow'; font-weight:700; font-size:11px; color:var(--dim); letter-spacing:0; }
+.pick-group .assist-grid { margin-bottom:0; }
 .assist-btn { display:flex; flex-direction:column; align-items:center; gap:2px; background:var(--bg3);
   border:1px solid var(--line); border-radius:12px; padding:12px 4px; cursor:pointer; color:var(--text); }
 .assist-btn:active { transform:scale(.95); background:#23362c; }
