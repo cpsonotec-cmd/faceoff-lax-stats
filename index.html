@@ -494,6 +494,8 @@ function App() {
     const recogRef = useRef(null);
     const listeningRef = useRef(false);
     const handleVoiceRef = useRef(() => { });
+    const restartCount = useRef(0);
+    const lastRestart = useRef(0);
     const voiceSupported = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
     useEffect(() => { listeningRef.current = listening; }, [listening]);
     useEffect(() => () => { try {
@@ -1323,58 +1325,73 @@ function App() {
         });
     }
     /* ---------------------- voice logging ---------------------- */
+    function matchPlayerByName(transcript) {
+        const stop = new Set(["face", "off", "on", "the", "a", "an", "of", "goal", "goals", "score", "scored", "win", "won", "lost", "loss", "faceoff", "ground", "groundball", "ball", "balls", "caused", "turnover", "turn", "over", "save", "saves", "penalty", "penalties", "miss", "missed", "wide", "cage", "shot", "assist", "assists", "man", "up", "down", "short", "handed", "shorthanded", "our", "opponent", "other", "team", "they", "and", "to", "for", "number", "no", "got", "had", "with", "clear", "failed"]);
+        const words = (transcript || "").toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter((w) => w.length >= 2 && !stop.has(w));
+        if (!words.length)
+            return null;
+        for (const w of words) {
+            const p = roster.find((pl) => ((pl.name || "").toLowerCase().split(/\s+/)[0]) === w);
+            if (p)
+                return p;
+        }
+        for (const w of words) {
+            const p = roster.find((pl) => (pl.name || "").toLowerCase().includes(w));
+            if (p)
+                return p;
+        }
+        return null;
+    }
     function handleVoice(transcript) {
-        const { key, num, strength, opp } = parseVoice(transcript);
-        if (!key) {
-            setVoiceMsg(`Heard "${transcript}" — no stat recognized`);
-            return;
-        }
-        if (!activeGame) {
-            setVoiceMsg("Start a game first");
-            return;
-        }
-        if (key === "opp") {
-            oppGoal();
-            setVoiceMsg("✓ Opponent goal");
-            return;
-        }
-        // penalty: open the length prompt (opponent, or a player)
-        if (key === "pen") {
-            if (opp) {
-                setPenaltyPrompt({ team: "opp" });
-                setVoiceMsg("Opponent penalty — pick length");
+        try {
+            const { key, num, strength, opp } = parseVoice(transcript);
+            if (!key) {
+                setVoiceMsg(`Heard "${transcript}" — no stat recognized`);
                 return;
             }
-            if (!num) {
-                setVoiceMsg(`Heard "${transcript}" — say a player number too`);
+            if (!activeGame) {
+                setVoiceMsg("Start a game first");
                 return;
             }
-            const pp = roster.find((p) => String(p.num) === String(num));
-            if (!pp) {
-                setVoiceMsg(`No #${num} on the roster`);
+            if (key === "opp") {
+                oppGoal();
+                setVoiceMsg("✓ Opponent goal");
                 return;
             }
-            setPenaltyPrompt({ team: "player", playerId: pp.id, num: pp.num, name: pp.name });
-            setVoiceMsg(`Penalty #${num} — pick length`);
-            return;
+            const byNum = num ? roster.find((p) => String(p.num) === String(num)) : null;
+            const player = byNum || (!num ? matchPlayerByName(transcript) : null);
+            const noWho = num ? `No #${num} on the roster` : `Heard "${transcript}" — say a player number or name`;
+            // penalty: open the length prompt (opponent, or a player)
+            if (key === "pen") {
+                if (opp) {
+                    setPenaltyPrompt({ team: "opp" });
+                    setVoiceMsg("Opponent penalty — pick length");
+                    return;
+                }
+                if (!player) {
+                    setVoiceMsg(noWho);
+                    return;
+                }
+                setPenaltyPrompt({ team: "player", playerId: player.id, num: player.num, name: player.name });
+                setVoiceMsg(`Penalty #${player.num} — pick length`);
+                return;
+            }
+            if (!player) {
+                setVoiceMsg(noWho);
+                return;
+            }
+            if (key === "g") {
+                logGoal(player, strength || "ev");
+                const tag = strength === "mu" ? " (man-up)" : strength === "md" ? " (man-down)" : "";
+                setVoiceMsg(`✓ Goal${tag} — #${player.num} ${player.name || ""}`.trim());
+                return;
+            }
+            logStat(player, STAT_BY_KEY[key]);
+            setVoiceMsg(`✓ ${STAT_BY_KEY[key].label} — #${player.num} ${player.name || ""}`.trim());
         }
-        if (!num) {
-            setVoiceMsg(`Heard "${transcript}" — say a player number too`);
-            return;
+        catch (err) {
+            setVoiceMsg("Didn't catch that — try again");
         }
-        const player = roster.find((p) => String(p.num) === String(num));
-        if (!player) {
-            setVoiceMsg(`No #${num} on the roster`);
-            return;
-        }
-        if (key === "g") {
-            logGoal(player, strength || "ev");
-            const tag = strength === "mu" ? " (man-up)" : strength === "md" ? " (man-down)" : "";
-            setVoiceMsg(`✓ Goal${tag} — #${num} ${player.name || ""}`.trim());
-            return;
-        }
-        logStat(player, STAT_BY_KEY[key]);
-        setVoiceMsg(`✓ ${STAT_BY_KEY[key].label} — #${num} ${player.name || ""}`.trim());
     }
     handleVoiceRef.current = handleVoice;
     function toggleVoice() {
@@ -1404,22 +1421,43 @@ function App() {
                         handleVoiceRef.current(res[0].transcript);
                 };
                 r.onerror = (e) => {
-                    setVoiceMsg(e.error === "not-allowed" || e.error === "service-not-allowed"
-                        ? "Microphone blocked — allow mic access (works best in Safari / Add to Home Screen)"
-                        : "Mic error: " + e.error);
-                    setListening(false);
-                };
-                r.onend = () => { if (listeningRef.current) {
-                    try {
-                        r.start();
+                    if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+                        setVoiceMsg("Microphone blocked — allow mic access (works best in Safari / Add to Home Screen)");
+                        setListening(false);
                     }
-                    catch (e) { }
-                } };
+                    else if (e.error === "no-speech" || e.error === "aborted") {
+                        // transient — let onend restart with a delay
+                    }
+                    else {
+                        setVoiceMsg("Mic hiccup: " + e.error + " — still listening");
+                    }
+                };
+                r.onend = () => {
+                    if (!listeningRef.current)
+                        return;
+                    // guard against a tight end->start spin that can freeze the page
+                    const now = Date.now();
+                    restartCount.current = now - lastRestart.current < 1500 ? restartCount.current + 1 : 0;
+                    lastRestart.current = now;
+                    if (restartCount.current > 6) {
+                        setListening(false);
+                        setVoiceMsg("Voice paused — tap Voice to resume");
+                        return;
+                    }
+                    setTimeout(() => { if (listeningRef.current) {
+                        try {
+                            r.start();
+                        }
+                        catch (e) { }
+                    } }, 350);
+                };
                 recogRef.current = r;
             }
+            restartCount.current = 0;
+            lastRestart.current = 0;
             recogRef.current.start();
             setListening(true);
-            setVoiceMsg('Listening… say "ground ball 43"');
+            setVoiceMsg('Listening… say "ground ball 43" or "faceoff win Owen"');
         }
         catch (e) {
             setVoiceMsg("Couldn't start the mic");
@@ -1492,7 +1530,7 @@ function App() {
                 React.createElement("button", { className: `mic ${listening ? "mic-on" : ""}`, onClick: toggleVoice, disabled: !voiceSupported },
                     React.createElement("span", { className: "mic-dot" }),
                     listening ? "Listening" : "Voice"),
-                React.createElement("span", { className: "voice-status" }, voiceMsg || (voiceSupported ? 'Tap Voice, then say "ground ball 43"' : "Voice not supported here"))),
+                React.createElement("span", { className: "voice-status" }, voiceMsg || (voiceSupported ? 'Tap Voice, then say "ground ball 43" or "goal Owen"' : "Voice not supported here"))),
             React.createElement("div", { className: "goaliebar" }, (() => {
                 const goalie = roster.find((p) => p.id === activeGame.goalieId);
                 if (!goalie) {
