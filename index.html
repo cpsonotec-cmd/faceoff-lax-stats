@@ -149,7 +149,7 @@ function parseVoice(text) {
     return { key, num, strength, opp };
 }
 const initialState = {
-    settings: { teamName: "Your Team", teamColor: "#3FD27E", defaultGoalieId: null },
+    settings: { teamName: "Express", teamColor: "#FF7A45", defaultGoalieId: null },
     rules: { periodType: "quarters", periodLength: 12, otLength: 4 },
     roster: [], // {id, num, name}
     tournaments: [], // {id, name}
@@ -1319,7 +1319,6 @@ function App() {
                     React.createElement("div", { className: "team-name", style: { color: activeGame.oppColor } }, activeGame.oppName),
                     React.createElement("div", { className: "score" }, activeGame.scores.opp),
                     React.createElement("button", { className: "opp-goal", onClick: oppGoal }, "+ Goal"))),
-            React.createElement("div", { className: "quickbar" }, [["ct", "CTO"], ["to", "TO"], ["gb", "GB"], ["sog", "SOG"], ["ms", "Shot"]].map(([key, label]) => (React.createElement("button", { key: key, className: "qchip", onClick: () => setStatAssign({ key, label }) }, label)))),
             React.createElement("div", { className: "qbar" }, periodLabels(rules).map((lab, i) => {
                 const val = i + 1;
                 return (React.createElement("button", { key: lab, className: `qbtn ${activeGame.period === val ? "qbtn-on" : ""}`, onClick: () => setPeriod(val) }, lab));
@@ -1365,6 +1364,12 @@ function App() {
                     React.createElement("div", { className: "pquick" },
                         React.createElement("button", { className: "qbtn2", onClick: () => logTeamStat("clr", "Clear") }, "Clear"),
                         React.createElement("button", { className: "qbtn2", onClick: () => logTeamStat("fclr", "Failed Clear") }, "Failed Clear"))),
+                React.createElement("div", { className: "teamline" },
+                    React.createElement("div", { className: "teamline-head" },
+                        React.createElement("span", { className: "teamline-dot", style: { background: settings.teamColor } }),
+                        React.createElement("span", { className: "teamline-name" }, settings.teamName || "Express"),
+                        React.createElement("span", { className: "teamline-stats" }, "assign to a player")),
+                    React.createElement("div", { className: "quickbar" }, [["ct", "CTO"], ["to", "TO"], ["gb", "GB"], ["sog", "SOG"], ["ms", "Shot"]].map(([key, label]) => (React.createElement("button", { key: key, className: "qchip", onClick: () => setStatAssign({ key, label }) }, label))))),
                 React.createElement("div", { className: "teamline" },
                     React.createElement("div", { className: "teamline-head" },
                         React.createElement("span", { className: "teamline-dot", style: { background: activeGame.oppColor } }),
@@ -2771,7 +2776,7 @@ const CSS = `
 .opp-goal:active { background:var(--bg3); }
 
 /* periods */
-.quickbar { display:flex; gap:6px; padding:8px 14px 0; }
+.quickbar { display:flex; gap:6px; padding:0 2px; }
 .qchip { flex:1; background:var(--bg3); border:1px solid var(--line); border-radius:10px; padding:11px 4px;
   color:var(--text); font-family:'Barlow Condensed'; font-weight:700; font-size:15px; letter-spacing:.03em; cursor:pointer; }
 .qchip:active { background:#23362c; transform:scale(.96); }
