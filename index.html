@@ -638,6 +638,11 @@ function App() {
         const a = statAssign;
         if (!a)
             return;
+        if (a.key === "g") {
+            setStatAssign(null);
+            scoreGoal(player);
+            return;
+        }
         if (a.teamKey) {
             updateActive((g) => {
                 const cur = g.stats[player.id] || emptyStats();
@@ -1395,23 +1400,19 @@ function App() {
                 React.createElement("div", { className: "teamline" },
                     React.createElement("div", { className: "teamline-head" },
                         React.createElement("span", { className: "teamline-dot", style: { background: settings.teamColor } }),
-                        React.createElement("span", { className: "teamline-name" }, settings.teamName),
+                        React.createElement("span", { className: "teamline-name" }, settings.teamName || "Express"),
                         React.createElement("span", { className: "teamline-stats" },
                             (activeGame.teamStats || {}).clr || 0,
                             " Clr \u00B7 ",
                             (activeGame.teamStats || {}).fclr || 0,
                             " Failed")),
                     React.createElement("div", { className: "pquick" },
+                        React.createElement("button", { className: "qbtn2 qbtn2-goal", onClick: () => setStatAssign({ key: "g", label: "Goal", who: "Who scored?" }) }, "Goal"),
                         React.createElement("button", { className: "qbtn2", onClick: () => logTeamStat("clr", "Clear") }, "Clear"),
                         React.createElement("button", { className: "qbtn2", onClick: () => setStatAssign({ key: "to", label: "Failed Clear", teamKey: "fclr", who: "Whose failed clear?" }) }, "Failed Clear"),
                         React.createElement("button", { className: "qbtn2", onClick: () => setStatAssign({ key: "fw", label: "Faceoff Won", who: "Who won it?" }) }, "FOW"),
-                        React.createElement("button", { className: "qbtn2", onClick: () => setStatAssign({ key: "fl", label: "Faceoff Lost", who: "Who lost it?" }) }, "FOL"))),
-                React.createElement("div", { className: "teamline" },
-                    React.createElement("div", { className: "teamline-head" },
-                        React.createElement("span", { className: "teamline-dot", style: { background: settings.teamColor } }),
-                        React.createElement("span", { className: "teamline-name" }, settings.teamName || "Express"),
-                        React.createElement("span", { className: "teamline-stats" }, "assign to a player")),
-                    React.createElement("div", { className: "quickbar" }, [["ct", "CTO"], ["to", "TO"], ["gb", "GB"], ["sog", "SOG"], ["ms", "Shot"]].map(([key, label]) => (React.createElement("button", { key: key, className: "qchip", onClick: () => setStatAssign({ key, label }) }, label))))),
+                        React.createElement("button", { className: "qbtn2", onClick: () => setStatAssign({ key: "fl", label: "Faceoff Lost", who: "Who lost it?" }) }, "FOL"),
+                        [["ct", "CTO"], ["to", "TO"], ["gb", "GB"], ["sog", "SOG"], ["ms", "Shot"]].map(([key, label]) => (React.createElement("button", { key: key, className: "qbtn2", onClick: () => setStatAssign({ key, label }) }, label))))),
                 React.createElement("div", { className: "teamline" },
                     React.createElement("div", { className: "teamline-head" },
                         React.createElement("span", { className: "teamline-dot", style: { background: activeGame.oppColor } }),
@@ -2864,6 +2865,7 @@ const CSS = `
 .qbtn2 { flex:1 1 60px; min-width:60px; background:var(--bg3); border:1px solid var(--line); border-radius:10px; padding:10px 4px;
   color:var(--text); font-family:'Barlow'; font-weight:700; font-size:13.5px; cursor:pointer; }
 .qbtn2:active { background:#23362c; transform:scale(.97); }
+.qbtn2-goal { background:var(--accent,#FF7A45); border-color:var(--accent,#FF7A45); color:#0B130F; }
 .teamlines { display:flex; flex-direction:column; gap:8px; padding:12px 14px 2px; }
 .teamline { background:var(--bg2); border:1px solid var(--line); border-radius:14px; padding:8px 12px 10px; }
 .teamline-head { display:flex; align-items:center; gap:8px; padding:4px 2px 8px; }
