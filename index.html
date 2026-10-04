@@ -7,7 +7,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" /><link rel="icon" type="image/png" href="icons/icon-192.png" />
 <style>html,body{margin:0;background:#0B130F;color:#EAF2EC;font-family:system-ui,sans-serif;-webkit-tap-highlight-color:transparent;overscroll-behavior:none;}#boot{display:flex;min-height:100vh;align-items:center;justify-content:center;letter-spacing:.18em;color:#8AA597;font-weight:800;}</style>
 </head><body><div id="root"><div id="boot">FACEOFF…</div></div>
-<script>window.__BUILD__="1791150320583";</script>
+<script>window.__BUILD__="1791150594085";</script>
 <script>window.__startFaceoff=function(){
 "use strict";
 var React=window.React,ReactDOM=window.ReactDOM;
@@ -696,11 +696,15 @@ function App() {
         const started = !running && secLeft > 0;
         if (started)
             setRunning(true);
-        setFoPrompt({ started });
+        setFoPrompt({ started, step: "pick" });
     }
     function faceoffResult(player, won) {
         logStat(player, STAT_BY_KEY[won ? "fw" : "fl"]);
-        setFoPrompt(null);
+        // after a win, ask whether a ground ball was awarded
+        if (won)
+            setFoPrompt((fp) => ({ ...(fp || {}), step: "gb" }));
+        else
+            setFoPrompt(null);
     }
     // Quick-stat picker selection. Credits the player's stat and, for a failed
     // clear, also bumps the team failed-clear count in one combined, undoable entry.
@@ -1373,7 +1377,7 @@ function App() {
                 return;
             }
             askConfirm(`Import ${r.length} players? This replaces your current roster.`, () => {
-                setState((prev) => ({ ...prev, roster: r.map((p) => ({ id: uid(), num: p.num, name: p.name, pos: p.pos || "", fo: !!p.fo })) }));
+                setState((prev) => ({ ...prev, roster: r.map((p) => ({ id: uid(), num: p.num, name: p.name, pos: p.pos || "", fo: !!p.fo, lsm: !!p.lsm })) }));
                 setImportKind(null);
                 setImportText("");
                 toast("Roster imported");
@@ -2163,7 +2167,13 @@ function App() {
                         React.createElement("b", null, "Won"),
                         " or ",
                         React.createElement("b", null, "Lost"),
-                        ". The box keeps showing the last player you picked."),
+                        ". After a win it asks ",
+                        React.createElement("b", null, "GB"),
+                        " or ",
+                        React.createElement("b", null, "No GB"),
+                        "; GB pops up your midfielders and LSM (position LSM, or the ",
+                        React.createElement("b", null, "LSM"),
+                        " box ticked in the roster) to credit the ground ball. The box keeps showing the last player you picked."),
                     React.createElement("div", { className: "help-h" }, "Quick stat buttons (your team box)"),
                     React.createElement("div", { className: "help-p" },
                         React.createElement("b", null, "Clear"),
@@ -2418,16 +2428,32 @@ function App() {
                     React.createElement("div", { className: "sheet-head" },
                         React.createElement("div", { className: "sheet-name" },
                             React.createElement("div", { className: "sheet-pn" }, "Face-off"),
-                            React.createElement("div", { className: "sheet-pts" },
-                                foPrompt.started ? "Clock started" : running ? "Clock already running" : "Clock not started",
-                                " \u2014 who's taking it?")),
+                            React.createElement("div", { className: "sheet-pts" }, foPrompt.step === "gb" || foPrompt.step === "gbwho" ? "Ground ball" : `${foPrompt.started ? "Clock started" : running ? "Clock already running" : "Clock not started"} — who's taking it?`)),
                         React.createElement("button", { className: "sheet-done", onClick: () => setFoPrompt(null) }, "Close")),
                     !foPlayers.length && (React.createElement("p", { className: "legend", style: { marginTop: 0 } }, "No face-off players marked yet, so everyone is shown. Mark them with the FO button in Setup \u2192 Roster.")),
-                    React.createElement(PickGrid, { players: list, selectedId: taker ? taker.id : null, onPick: (p) => patchActiveGame({ foTakerId: p.id }) }),
-                    React.createElement("div", { className: "fo-result" },
-                        React.createElement("button", { className: "btn btn-primary", disabled: !taker, onClick: () => faceoffResult(taker, true) }, "Won"),
-                        React.createElement("button", { className: "btn btn-danger", disabled: !taker, onClick: () => faceoffResult(taker, false) }, "Lost")),
-                    React.createElement("p", { className: "legend" }, taker ? `Taking it: #${taker.num} ${taker.name || ""}. Tap Won or Lost when it's decided, or Close to leave it unrecorded.` : "Pick a player, then tap Won or Lost."))));
+                    (!foPrompt.step || foPrompt.step === "pick") && (React.createElement(React.Fragment, null,
+                        React.createElement(PickGrid, { players: list, selectedId: taker ? taker.id : null, onPick: (p) => patchActiveGame({ foTakerId: p.id }) }),
+                        React.createElement("div", { className: "fo-result" },
+                            React.createElement("button", { className: "btn btn-primary", disabled: !taker, onClick: () => faceoffResult(taker, true) }, "Won"),
+                            React.createElement("button", { className: "btn btn-danger", disabled: !taker, onClick: () => faceoffResult(taker, false) }, "Lost")),
+                        React.createElement("p", { className: "legend" }, taker ? `Taking it: #${taker.num} ${taker.name || ""}. Tap Won or Lost when it's decided, or Close to leave it unrecorded.` : "Pick a player, then tap Won or Lost."))),
+                    foPrompt.step === "gb" && (React.createElement(React.Fragment, null,
+                        React.createElement("p", { className: "legend", style: { marginTop: 0 } },
+                            "Face-off won",
+                            taker ? ` by #${taker.num} ${taker.name || ""}` : "",
+                            ". Was a ground ball awarded?"),
+                        React.createElement("div", { className: "fo-result" },
+                            React.createElement("button", { className: "btn btn-primary", onClick: () => setFoPrompt({ ...foPrompt, step: "gbwho" }) }, "GB"),
+                            React.createElement("button", { className: "btn", onClick: () => setFoPrompt(null) }, "No GB")))),
+                    foPrompt.step === "gbwho" && (() => {
+                        const wing = roster.filter((p) => p.pos === "M" || p.pos === "LSM" || p.lsm);
+                        return (React.createElement(React.Fragment, null,
+                            React.createElement("p", { className: "legend", style: { marginTop: 0 } },
+                                "Who got the ground ball? ",
+                                wing.length ? "Midfielders and LSM." : "No midfielders or LSM set, so everyone is shown."),
+                            React.createElement(PickGrid, { players: wing.length ? wing : roster, onPick: (p) => { logStat(p, STAT_BY_KEY.gb); setFoPrompt(null); } }),
+                            React.createElement("button", { className: "btn btn-block", onClick: () => setFoPrompt(null) }, "No GB")));
+                    })())));
         })(),
         statAssign && (React.createElement("div", { className: "overlay", onClick: () => setStatAssign(null) },
             React.createElement("div", { className: "sheet tall", onClick: (e) => e.stopPropagation() },
@@ -3252,9 +3278,13 @@ function RosterEditor({ players, onAdd, onUpdate, onDelete, onSample, color }) {
             React.createElement("p", { className: "legend", style: { margin: "0 0 8px" } },
                 "Number \u00B7 name \u00B7 position \u00B7 ",
                 React.createElement("b", null, "FO"),
-                " = takes face-offs (tap to turn on). ",
+                " = takes face-offs \u00B7 ",
+                React.createElement("b", null, "LSM"),
+                " = long-stick middie (tap to turn on). ",
                 players.filter((p) => p.fo).length,
-                " marked."),
+                " FO, ",
+                players.filter((p) => p.lsm || p.pos === "LSM").length,
+                " LSM."),
             players.map((p) => (React.createElement("div", { key: p.id, className: "editrow" },
                 React.createElement("input", { className: "field num", value: p.num, inputMode: "numeric", onChange: (e) => onUpdate(p.id, "num", e.target.value), style: { borderColor: color } }),
                 React.createElement("input", { className: "field", value: p.name, placeholder: "Name", onChange: (e) => onUpdate(p.id, "name", e.target.value) }),
@@ -3262,6 +3292,7 @@ function RosterEditor({ players, onAdd, onUpdate, onDelete, onSample, color }) {
                     React.createElement("option", { value: "" }, "\u2014"),
                     POSITIONS.map((op) => React.createElement("option", { key: op.key, value: op.key }, op.label))),
                 React.createElement("button", { className: `fo-tog ${p.fo ? "fo-on" : ""}`, onClick: () => onUpdate(p.id, "fo", !p.fo), "aria-label": "takes face-offs", "aria-pressed": !!p.fo }, "FO"),
+                React.createElement("button", { className: `fo-tog ${p.lsm || p.pos === "LSM" ? "lsm-on" : ""}`, onClick: () => onUpdate(p.id, "lsm", !p.lsm), "aria-label": "long stick middie", "aria-pressed": !!p.lsm || p.pos === "LSM" }, "LSM"),
                 React.createElement("button", { className: "editdel", onClick: () => onDelete(p.id), "aria-label": "delete" }, "\u2715"))))))));
 }
 /* ----------------------- stepper ----------------------- */
@@ -3337,7 +3368,8 @@ const CSS = `
 .fo-result .btn { flex:1; }
 .fo-result .btn:disabled { opacity:.4; }
 .assist-btn-sel { background:#2c4436; outline:2px solid var(--text); }
-.fo-tog { flex:none; width:44px; padding:11px 0; background:var(--bg3); border:1px solid var(--line); border-radius:10px; color:var(--dim); font-family:'Barlow Condensed'; font-weight:800; font-size:14px; letter-spacing:.06em; cursor:pointer; }
+.fo-tog { flex:none; width:40px; padding:11px 0; background:var(--bg3); border:1px solid var(--line); border-radius:10px; color:var(--dim); font-family:'Barlow Condensed'; font-weight:800; font-size:14px; letter-spacing:.06em; cursor:pointer; }
+.fo-tog.lsm-on { background:#A371F7; border-color:#A371F7; color:#0B130F; }
 .fo-tog.fo-on { background:#E2A50E; border-color:#E2A50E; color:#0B130F; }
 .undobar { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 14px 0; }
 .undobar-last { font-family:'Barlow'; font-size:12px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -3507,7 +3539,10 @@ const CSS = `
 .addrow { display:flex; gap:8px; margin-bottom:12px; }
 .btn-add { flex:none; }
 .editlist { display:flex; flex-direction:column; gap:8px; }
-.editrow { display:flex; gap:8px; align-items:center; }
+.editrow { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding-bottom:10px; margin-bottom:10px; border-bottom:1px solid var(--line); }
+.editrow:last-child { border-bottom:none; margin-bottom:0; padding-bottom:0; }
+.editrow > .field:not(.num):not(.pos) { flex:1 1 150px; min-width:150px; }
+.editrow > .field.pos { flex:1 1 104px; width:auto; }
 .editdel { background:transparent; border:1px solid var(--line); color:var(--dim); border-radius:9px; width:38px; height:42px; flex:none; cursor:pointer; font-size:13px; }
 
 /* rules stepper */
