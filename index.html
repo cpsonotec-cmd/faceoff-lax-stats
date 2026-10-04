@@ -7,7 +7,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" /><link rel="icon" type="image/png" href="icons/icon-192.png" />
 <style>html,body{margin:0;background:#0B130F;color:#EAF2EC;font-family:system-ui,sans-serif;-webkit-tap-highlight-color:transparent;overscroll-behavior:none;}#boot{display:flex;min-height:100vh;align-items:center;justify-content:center;letter-spacing:.18em;color:#8AA597;font-weight:800;}</style>
 </head><body><div id="root"><div id="boot">FACEOFF…</div></div>
-<script>window.__BUILD__="1791146027551";</script>
+<script>window.__BUILD__="1791149728510";</script>
 <script>window.__startFaceoff=function(){
 "use strict";
 var React=window.React,ReactDOM=window.ReactDOM;
@@ -384,12 +384,14 @@ function aggregateTeam(games) {
         o.shg += ts.shg || 0; // your short-handed goals
         o.oppGb += os.gb || 0;
         o.oppMs += os.ms || 0;
+        o.oppClr += os.clr || 0;
+        o.oppFclr += os.fclr || 0;
         o.oppMug += os.mug || 0; // opponent man-up goals (PK failures)
         o.oppShg += os.shg || 0;
         o.oppPen += os.pen || 0; // opponent penalties (your EMO chances)
         o.pkOpp += ts.pkOpp || 0; // your penalty-kill chances
         return o;
-    }, { clr: 0, fclr: 0, mug: 0, shg: 0, oppGb: 0, oppMs: 0, oppMug: 0, oppShg: 0, oppPen: 0, pkOpp: 0 });
+    }, { clr: 0, fclr: 0, mug: 0, shg: 0, oppGb: 0, oppMs: 0, oppClr: 0, oppFclr: 0, oppMug: 0, oppShg: 0, oppPen: 0, pkOpp: 0 });
 }
 const PENALTY_LENGTHS = ["0:30", "1:00", "2:00", "3:00"];
 const STRENGTHS = [
@@ -1055,7 +1057,7 @@ function App() {
         const tt = aggregateTeam(gs);
         const pkKilled = Math.max(0, tt.pkOpp - tt.oppMug);
         lines.push("");
-        lines.push(`Team clears: ${tt.clr}/${tt.clr + tt.fclr} (${pct(tt.clr, tt.clr + tt.fclr)}) · Opponent: ${a.oppScore} G, ${tt.oppGb} GB, ${tt.oppMs} Miss`);
+        lines.push(`Team clears: ${tt.clr}/${tt.clr + tt.fclr} (${pct(tt.clr, tt.clr + tt.fclr)}) · Opponent: ${a.oppScore} G, ${tt.oppGb} GB, ${tt.oppMs} Miss, clears ${tt.oppClr}/${tt.oppClr + tt.oppFclr} (${pct(tt.oppClr, tt.oppClr + tt.oppFclr)})`);
         lines.push(`Man-up (EMO): ${tt.mug}/${tt.oppPen} (${pct(tt.mug, tt.oppPen)}) · Penalty kill: ${pkKilled}/${tt.pkOpp} (${pct(pkKilled, tt.pkOpp)}) · SH goals ${tt.shg}`);
         return lines.join("\n");
     }
@@ -1093,6 +1095,8 @@ function App() {
         out.push([esc("Penalty Kill%"), esc(pn(pkKilled, tt.pkOpp))].join(","));
         out.push([esc("Opponent Goals"), esc(a.oppScore)].join(","));
         out.push([esc("Opponent GroundBalls"), esc(tt.oppGb)].join(","));
+        out.push([esc("Opponent Clears"), esc(tt.oppClr)].join(","));
+        out.push([esc("Opponent Failed Clears"), esc(tt.oppFclr)].join(","));
         out.push([esc("Opponent Misses"), esc(tt.oppMs)].join(","));
         out.push([esc("Opponent Penalties"), esc(tt.oppPen)].join(","));
         return out.join("\n");
@@ -1660,13 +1664,19 @@ function App() {
                             (activeGame.oppStats || {}).ms || 0,
                             " Miss \u00B7 ",
                             (activeGame.oppStats || {}).pen || 0,
-                            " Pen")),
+                            " Pen \u00B7 Clr ",
+                            (activeGame.oppStats || {}).clr || 0,
+                            "/",
+                            ((activeGame.oppStats || {}).clr || 0) + ((activeGame.oppStats || {}).fclr || 0))),
                     React.createElement("div", { className: "pquick" },
                         React.createElement("button", { className: "qbtn2", onClick: oppGoal }, "Goal"),
                         React.createElement("button", { className: "qbtn2", onClick: oppSog }, "SOG"),
                         React.createElement("button", { className: "qbtn2", onClick: () => logOppStat("gb", "GB") }, "GB"),
                         React.createElement("button", { className: "qbtn2", onClick: () => logOppStat("ms", "Miss") }, "Miss"),
-                        React.createElement("button", { className: "qbtn2", onClick: () => setPenaltyPrompt({ team: "opp" }) }, "Penalty"))),
+                        React.createElement("button", { className: "qbtn2", onClick: () => setPenaltyPrompt({ team: "opp" }) }, "Penalty")),
+                    React.createElement("div", { className: "pquick", style: { marginTop: 6 } },
+                        React.createElement("button", { className: "qbtn2", onClick: () => logOppStat("clr", "Clear") }, "Clear"),
+                        React.createElement("button", { className: "qbtn2", onClick: () => logOppStat("fclr", "Failed Clear") }, "Failed Clear"))),
                 React.createElement("div", { className: "teamline-actions" },
                     React.createElement("button", { className: "linkbtn", onClick: () => setShowTeamEdit(true) }, "Edit man-up / penalty kill"))),
             roster.length === 0 ? (React.createElement("div", { className: "empty" },
@@ -1857,7 +1867,13 @@ function App() {
                             t.clr,
                             "/",
                             t.clr + t.fclr,
-                            " \u00B7 Man-up ",
+                            " \u00B7 Opp clears ",
+                            t.oppClr,
+                            "/",
+                            t.oppClr + t.oppFclr,
+                            " (",
+                            pct(t.oppClr, t.oppClr + t.oppFclr),
+                            ") \u00B7 Man-up ",
                             t.mug,
                             "/",
                             t.oppPen,
@@ -2125,7 +2141,7 @@ function App() {
                         " (faceoff won/lost) and ",
                         React.createElement("b", null, "CTO, TO, GB, SOG, Miss"),
                         " all ask which player to credit. The opponent box has ",
-                        React.createElement("b", null, "Goal, SOG, GB, Miss, Penalty"),
+                        React.createElement("b", null, "Goal, SOG, GB, Miss, Penalty, Clear, Failed Clear"),
                         " \u2014 an opponent ",
                         React.createElement("b", null, "SOG"),
                         " is a shot your goalie stopped, so it also credits a ",
