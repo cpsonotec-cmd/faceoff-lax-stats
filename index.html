@@ -7,7 +7,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" /><link rel="icon" type="image/png" href="icons/icon-192.png" />
 <style>html,body{margin:0;background:#0B130F;color:#EAF2EC;font-family:system-ui,sans-serif;-webkit-tap-highlight-color:transparent;overscroll-behavior:none;}#boot{display:flex;min-height:100vh;align-items:center;justify-content:center;letter-spacing:.18em;color:#8AA597;font-weight:800;}</style>
 </head><body><div id="root"><div id="boot">FACEOFF…</div></div>
-<script>window.__BUILD__="1791062861306";</script>
+<script>window.__BUILD__="1791146027551";</script>
 <script>window.__startFaceoff=function(){
 "use strict";
 var React=window.React,ReactDOM=window.ReactDOM;
@@ -859,6 +859,24 @@ function App() {
         });
         toast(`${settings.teamName} — ${label}`);
     }
+    // opponent shot on goal that didn't score = a save for our goalie
+    function oppSog() {
+        const gid = activeGame && activeGame.goalieId;
+        const goalie = gid ? roster.find((p) => p.id === gid) : null;
+        updateActive((g) => {
+            const os = { ...(g.oppStats || {}), sog: ((g.oppStats || {}).sog || 0) + 1 };
+            const entry = { id: uid(), period: g.period, oppStat: "sog", label: "SOG" };
+            let stats = g.stats;
+            if (g.goalieId) {
+                const cur = g.stats[g.goalieId] || emptyStats();
+                stats = { ...g.stats, [g.goalieId]: { ...cur, sv: (cur.sv || 0) + 1 } };
+                entry.goalieId = g.goalieId;
+                entry.label = "SOG (save)";
+            }
+            return { ...g, oppStats: os, stats, log: [entry, ...g.log] };
+        });
+        toast(goalie ? `Save — #${goalie.num} ${goalie.name || ""}`.trim() : "Opponent SOG — set a goalie to credit the save");
+    }
     function logOppStat(key, label) {
         updateActive((g) => {
             const os = { ...(g.oppStats || {}), [key]: ((g.oppStats || {})[key] || 0) + 1 };
@@ -901,6 +919,10 @@ function App() {
             }
             else if (entry.oppStat) {
                 oppStats = { ...oppStats, [entry.oppStat]: Math.max(0, (oppStats[entry.oppStat] || 0) - 1) };
+                if (entry.oppStat === "sog" && entry.goalieId && g.stats[entry.goalieId]) {
+                    const cur = g.stats[entry.goalieId];
+                    stats = { ...stats, [entry.goalieId]: { ...cur, sv: Math.max(0, (cur.sv || 0) - 1) } };
+                }
             }
             return { ...g, stats, scores, teamStats, oppStats, log: g.log.filter((e) => e.id !== entryId) };
         });
@@ -1631,6 +1653,8 @@ function App() {
                         React.createElement("span", { className: "teamline-stats" },
                             activeGame.scores.opp,
                             " G \u00B7 ",
+                            (activeGame.oppStats || {}).sog || 0,
+                            " SOG \u00B7 ",
                             (activeGame.oppStats || {}).gb || 0,
                             " GB \u00B7 ",
                             (activeGame.oppStats || {}).ms || 0,
@@ -1639,6 +1663,7 @@ function App() {
                             " Pen")),
                     React.createElement("div", { className: "pquick" },
                         React.createElement("button", { className: "qbtn2", onClick: oppGoal }, "Goal"),
+                        React.createElement("button", { className: "qbtn2", onClick: oppSog }, "SOG"),
                         React.createElement("button", { className: "qbtn2", onClick: () => logOppStat("gb", "GB") }, "GB"),
                         React.createElement("button", { className: "qbtn2", onClick: () => logOppStat("ms", "Miss") }, "Miss"),
                         React.createElement("button", { className: "qbtn2", onClick: () => setPenaltyPrompt({ team: "opp" }) }, "Penalty"))),
@@ -2100,8 +2125,12 @@ function App() {
                         " (faceoff won/lost) and ",
                         React.createElement("b", null, "CTO, TO, GB, SOG, Miss"),
                         " all ask which player to credit. The opponent box has ",
-                        React.createElement("b", null, "Goal, GB, Miss, Penalty"),
-                        "."),
+                        React.createElement("b", null, "Goal, SOG, GB, Miss, Penalty"),
+                        " \u2014 an opponent ",
+                        React.createElement("b", null, "SOG"),
+                        " is a shot your goalie stopped, so it also credits a ",
+                        React.createElement("b", null, "save"),
+                        " to the goalie in net."),
                     React.createElement("div", { className: "help-h" }, "Stat glossary"),
                     [
                         ["G / A / P", "Goals, Assists, Points (G + A)"],
