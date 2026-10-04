@@ -7,7 +7,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" /><link rel="icon" type="image/png" href="icons/icon-192.png" />
 <style>html,body{margin:0;background:#0B130F;color:#EAF2EC;font-family:system-ui,sans-serif;-webkit-tap-highlight-color:transparent;overscroll-behavior:none;}#boot{display:flex;min-height:100vh;align-items:center;justify-content:center;letter-spacing:.18em;color:#8AA597;font-weight:800;}</style>
 </head><body><div id="root"><div id="boot">FACEOFF…</div></div>
-<script>window.__BUILD__="1791149940790";</script>
+<script>window.__BUILD__="1791150320583";</script>
 <script>window.__startFaceoff=function(){
 "use strict";
 var React=window.React,ReactDOM=window.ReactDOM;
@@ -51,7 +51,7 @@ const POS_COLOR = { A: "#E5484D", M: "#4C8DFF", LSM: "#A371F7", D: "#30A46C", G:
 const PICK_GROUPS = [["A", "Attack"], ["M", "Midfield"], ["LSM", "LSM"], ["D", "Defense"], ["G", "Goalie"], ["", "Other"]];
 const KNOWN_POS = ["A", "M", "LSM", "D", "G"];
 // grouped, color-coded grid of player buttons for the pop-up pickers
-function PickGrid({ players, onPick }) {
+function PickGrid({ players, onPick, selectedId }) {
     const groups = PICK_GROUPS
         .map(([code, label]) => ({
         code, label, color: POS_COLOR[code],
@@ -63,7 +63,7 @@ function PickGrid({ players, onPick }) {
             React.createElement("span", { className: "pick-dot", style: { background: g.color } }),
             g.label,
             React.createElement("span", { className: "pick-count" }, g.list.length)),
-        React.createElement("div", { className: "assist-grid" }, g.list.map((p) => (React.createElement("button", { key: p.id, className: "assist-btn", style: { borderTop: `3px solid ${g.color}` }, onClick: () => onPick(p) },
+        React.createElement("div", { className: "assist-grid" }, g.list.map((p) => (React.createElement("button", { key: p.id, className: `assist-btn ${selectedId === p.id ? "assist-btn-sel" : ""}`, style: { borderTop: `3px solid ${g.color}` }, onClick: () => onPick(p) },
             React.createElement("span", { className: "assist-num", style: { color: g.color } }, p.num),
             React.createElement("span", { className: "assist-name" }, p.name || "—"))))))))));
 }
@@ -521,6 +521,7 @@ function App() {
     const [showReport, setShowReport] = useState(false); // printable report
     const [showSelfCheck, setShowSelfCheck] = useState(false); // stat-engine self-check
     const [showHelp, setShowHelp] = useState(false); // in-app guide
+    const [foPrompt, setFoPrompt] = useState(null); // face-off pop-up: { started }
     const [confirmBox, setConfirmBox] = useState(null); // { message, onConfirm, requireType? }
     const [confirmType, setConfirmType] = useState(""); // text typed into a type-to-confirm box
     function askConfirm(message, onConfirm) { setConfirmType(""); setConfirmBox({ message, onConfirm }); }
@@ -689,6 +690,17 @@ function App() {
             return { ...g, stats, scores, log: [entry, ...g.log] };
         });
         toast(`${stat.label} — #${player.num} ${player.name || ""}`.trim());
+    }
+    // face-off: start the clock if it isn't running, then pick who is taking it
+    function openFaceoff() {
+        const started = !running && secLeft > 0;
+        if (started)
+            setRunning(true);
+        setFoPrompt({ started });
+    }
+    function faceoffResult(player, won) {
+        logStat(player, STAT_BY_KEY[won ? "fw" : "fl"]);
+        setFoPrompt(null);
     }
     // Quick-stat picker selection. Credits the player's stat and, for a failed
     // clear, also bumps the team failed-clear count in one combined, undoable entry.
@@ -1361,7 +1373,7 @@ function App() {
                 return;
             }
             askConfirm(`Import ${r.length} players? This replaces your current roster.`, () => {
-                setState((prev) => ({ ...prev, roster: r.map((p) => ({ id: uid(), num: p.num, name: p.name, pos: p.pos || "" })) }));
+                setState((prev) => ({ ...prev, roster: r.map((p) => ({ id: uid(), num: p.num, name: p.name, pos: p.pos || "", fo: !!p.fo })) }));
                 setImportKind(null);
                 setImportText("");
                 toast("Roster imported");
@@ -1602,6 +1614,14 @@ function App() {
                     React.createElement("div", { className: "score" }, activeGame.scores.opp),
                     React.createElement("button", { className: "opp-goal", onClick: oppGoal }, "+ Goal"),
                     React.createElement("button", { className: "opp-goal sb-pen", onClick: () => setPenaltyPrompt({ team: "opp" }) }, "Penalty"))),
+            (() => {
+                const taker = roster.find((p) => p.id === activeGame.foTakerId);
+                return (React.createElement("div", { className: "fobar" },
+                    React.createElement("button", { className: "fo-box", onClick: openFaceoff },
+                        React.createElement("span", { className: "fo-x" }, "\u2715"),
+                        React.createElement("span", { className: "fo-lab" }, "Face-off"),
+                        React.createElement("span", { className: "fo-name" }, taker ? `#${taker.num} ${taker.name || ""}`.trim() : "tap to pick who's taking it"))));
+            })(),
             React.createElement("div", { className: "undobar" },
                 React.createElement("span", { className: "undobar-last" }, activeGame.log && activeGame.log.length ? `Last: ${describeEntry(activeGame.log[0])}` : "No actions yet"),
                 React.createElement("button", { className: "undo-btn", onClick: undoLast, disabled: !(activeGame.log && activeGame.log.length) }, "\u27F2 Undo")),
@@ -1654,8 +1674,8 @@ function App() {
                     React.createElement("div", { className: "pquick", style: { flexWrap: "nowrap" } },
                         React.createElement("button", { className: "qbtn2", onClick: () => logTeamStat("clr", "Clear") }, "Clear"),
                         React.createElement("button", { className: "qbtn2", onClick: () => setStatAssign({ key: "to", label: "Failed Clear", teamKey: "fclr", who: "Whose failed clear?" }) }, "Failed Clear"),
-                        React.createElement("button", { className: "qbtn2", onClick: () => setStatAssign({ key: "fw", label: "Faceoff Won", who: "Who won it?" }) }, "FOW"),
-                        React.createElement("button", { className: "qbtn2", onClick: () => setStatAssign({ key: "fl", label: "Faceoff Lost", who: "Who lost it?" }) }, "FOL")),
+                        React.createElement("button", { className: "qbtn2", onClick: () => setStatAssign({ key: "fw", label: "Faceoff Won", who: "Who won it?", fo: true }) }, "FOW"),
+                        React.createElement("button", { className: "qbtn2", onClick: () => setStatAssign({ key: "fl", label: "Faceoff Lost", who: "Who lost it?", fo: true }) }, "FOL")),
                     React.createElement("div", { className: "pquick", style: { marginTop: 6 } }, [["ct", "CTO"], ["to", "TO"], ["gb", "GB"], ["sog", "SOG"], ["ms", "Miss"]].map(([key, label]) => (React.createElement("button", { key: key, className: "qbtn2", onClick: () => setStatAssign({ key, label }) }, label))))),
                 React.createElement("div", { className: "teamline" },
                     React.createElement("div", { className: "teamline-head" },
@@ -2134,6 +2154,16 @@ function App() {
                         ", and ",
                         React.createElement("b", null, "Save game"),
                         "."),
+                    React.createElement("div", { className: "help-p" },
+                        "The ",
+                        React.createElement("b", null, "Face-off"),
+                        " box starts the clock if it isn't running and pops up your face-off players (the ones marked ",
+                        React.createElement("b", null, "FO"),
+                        " in Setup \u2192 Roster). Pick who's taking it, then tap ",
+                        React.createElement("b", null, "Won"),
+                        " or ",
+                        React.createElement("b", null, "Lost"),
+                        ". The box keeps showing the last player you picked."),
                     React.createElement("div", { className: "help-h" }, "Quick stat buttons (your team box)"),
                     React.createElement("div", { className: "help-p" },
                         React.createElement("b", null, "Clear"),
@@ -2379,6 +2409,26 @@ function App() {
                     React.createElement(PickGrid, { players: roster.filter((p) => p.id !== assistPrompt.scorerId), onPick: (p) => { logStat(p, STAT_BY_KEY.a); setAssistPrompt(null); } }),
                     React.createElement("button", { className: "btn btn-block", onClick: () => setAssistPrompt(null) }, "Unassisted"))));
         })(),
+        foPrompt && activeGame && (() => {
+            const foPlayers = roster.filter((p) => p.fo);
+            const list = foPlayers.length ? foPlayers : roster;
+            const taker = roster.find((p) => p.id === activeGame.foTakerId) || null;
+            return (React.createElement("div", { className: "overlay", onClick: () => setFoPrompt(null) },
+                React.createElement("div", { className: "sheet tall", onClick: (e) => e.stopPropagation() },
+                    React.createElement("div", { className: "sheet-head" },
+                        React.createElement("div", { className: "sheet-name" },
+                            React.createElement("div", { className: "sheet-pn" }, "Face-off"),
+                            React.createElement("div", { className: "sheet-pts" },
+                                foPrompt.started ? "Clock started" : running ? "Clock already running" : "Clock not started",
+                                " \u2014 who's taking it?")),
+                        React.createElement("button", { className: "sheet-done", onClick: () => setFoPrompt(null) }, "Close")),
+                    !foPlayers.length && (React.createElement("p", { className: "legend", style: { marginTop: 0 } }, "No face-off players marked yet, so everyone is shown. Mark them with the FO button in Setup \u2192 Roster.")),
+                    React.createElement(PickGrid, { players: list, selectedId: taker ? taker.id : null, onPick: (p) => patchActiveGame({ foTakerId: p.id }) }),
+                    React.createElement("div", { className: "fo-result" },
+                        React.createElement("button", { className: "btn btn-primary", disabled: !taker, onClick: () => faceoffResult(taker, true) }, "Won"),
+                        React.createElement("button", { className: "btn btn-danger", disabled: !taker, onClick: () => faceoffResult(taker, false) }, "Lost")),
+                    React.createElement("p", { className: "legend" }, taker ? `Taking it: #${taker.num} ${taker.name || ""}. Tap Won or Lost when it's decided, or Close to leave it unrecorded.` : "Pick a player, then tap Won or Lost."))));
+        })(),
         statAssign && (React.createElement("div", { className: "overlay", onClick: () => setStatAssign(null) },
             React.createElement("div", { className: "sheet tall", onClick: (e) => e.stopPropagation() },
                 React.createElement("div", { className: "sheet-head" },
@@ -2390,7 +2440,7 @@ function App() {
                     React.createElement("button", { className: "assist-btn assist-btn-alt", onClick: () => { logTeamStat(statAssign.teamKey, statAssign.label); setStatAssign(null); } },
                         React.createElement("span", { className: "assist-num" }, "\u2014"),
                         React.createElement("span", { className: "assist-name" }, "Team only")))),
-                React.createElement(PickGrid, { players: roster, onPick: assignStat })))),
+                React.createElement(PickGrid, { players: statAssign.fo && roster.some((p) => p.fo) ? roster.filter((p) => p.fo) : roster, onPick: assignStat })))),
         penaltyPrompt && (React.createElement("div", { className: "overlay", onClick: () => setPenaltyPrompt(null) },
             React.createElement("div", { className: "sheet", onClick: (e) => e.stopPropagation() },
                 React.createElement("div", { className: "sheet-head" },
@@ -3198,13 +3248,21 @@ function RosterEditor({ players, onAdd, onUpdate, onDelete, onSample, color }) {
             React.createElement("input", { className: "field", placeholder: "Player name", value: name, onChange: (e) => setName(e.target.value), onKeyDown: (e) => e.key === "Enter" && add() }),
             React.createElement("select", { className: "field pos", value: pos, onChange: (e) => setPos(e.target.value), "aria-label": "position" }, POSITIONS.map((p) => React.createElement("option", { key: p.key, value: p.key }, p.label))),
             React.createElement("button", { className: "btn btn-primary btn-add", onClick: add }, "Add")),
-        players.length === 0 ? (React.createElement("button", { className: "btn btn-block", onClick: onSample }, "Load sample team")) : (React.createElement("div", { className: "editlist" }, players.map((p) => (React.createElement("div", { key: p.id, className: "editrow" },
-            React.createElement("input", { className: "field num", value: p.num, inputMode: "numeric", onChange: (e) => onUpdate(p.id, "num", e.target.value), style: { borderColor: color } }),
-            React.createElement("input", { className: "field", value: p.name, placeholder: "Name", onChange: (e) => onUpdate(p.id, "name", e.target.value) }),
-            React.createElement("select", { className: "field pos", value: p.pos || "", onChange: (e) => onUpdate(p.id, "pos", e.target.value), "aria-label": "position" },
-                React.createElement("option", { value: "" }, "\u2014"),
-                POSITIONS.map((op) => React.createElement("option", { key: op.key, value: op.key }, op.label))),
-            React.createElement("button", { className: "editdel", onClick: () => onDelete(p.id), "aria-label": "delete" }, "\u2715"))))))));
+        players.length === 0 ? (React.createElement("button", { className: "btn btn-block", onClick: onSample }, "Load sample team")) : (React.createElement("div", { className: "editlist" },
+            React.createElement("p", { className: "legend", style: { margin: "0 0 8px" } },
+                "Number \u00B7 name \u00B7 position \u00B7 ",
+                React.createElement("b", null, "FO"),
+                " = takes face-offs (tap to turn on). ",
+                players.filter((p) => p.fo).length,
+                " marked."),
+            players.map((p) => (React.createElement("div", { key: p.id, className: "editrow" },
+                React.createElement("input", { className: "field num", value: p.num, inputMode: "numeric", onChange: (e) => onUpdate(p.id, "num", e.target.value), style: { borderColor: color } }),
+                React.createElement("input", { className: "field", value: p.name, placeholder: "Name", onChange: (e) => onUpdate(p.id, "name", e.target.value) }),
+                React.createElement("select", { className: "field pos", value: p.pos || "", onChange: (e) => onUpdate(p.id, "pos", e.target.value), "aria-label": "position" },
+                    React.createElement("option", { value: "" }, "\u2014"),
+                    POSITIONS.map((op) => React.createElement("option", { key: op.key, value: op.key }, op.label))),
+                React.createElement("button", { className: `fo-tog ${p.fo ? "fo-on" : ""}`, onClick: () => onUpdate(p.id, "fo", !p.fo), "aria-label": "takes face-offs", "aria-pressed": !!p.fo }, "FO"),
+                React.createElement("button", { className: "editdel", onClick: () => onDelete(p.id), "aria-label": "delete" }, "\u2715"))))))));
 }
 /* ----------------------- stepper ----------------------- */
 function Stepper({ value, min, max, onChange, suffix }) {
@@ -3269,6 +3327,18 @@ const CSS = `
   display:flex; flex-direction:column; align-items:center; cursor:pointer; }
 .clock-hint { font-family:'Barlow'; font-size:8.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--dim); margin-top:1px; }
 .clock-mode { font-family:'Barlow'; font-size:9.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); margin-top:3px; text-align:center; }
+.fobar { padding:10px 14px 0; }
+.fo-box { width:100%; display:flex; align-items:center; gap:10px; background:var(--bg2); border:1px solid var(--line); border-radius:14px; padding:11px 14px; color:var(--text); cursor:pointer; text-align:left; }
+.fo-box:active { background:var(--bg3); transform:scale(.99); }
+.fo-x { font-weight:900; font-size:16px; color:#E2A50E; }
+.fo-lab { font-family:'Barlow Condensed'; font-weight:800; font-size:16px; letter-spacing:.08em; text-transform:uppercase; }
+.fo-name { margin-left:auto; font-family:'Barlow'; font-weight:700; font-size:13px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.fo-result { display:flex; gap:8px; margin:4px 0 8px; }
+.fo-result .btn { flex:1; }
+.fo-result .btn:disabled { opacity:.4; }
+.assist-btn-sel { background:#2c4436; outline:2px solid var(--text); }
+.fo-tog { flex:none; width:44px; padding:11px 0; background:var(--bg3); border:1px solid var(--line); border-radius:10px; color:var(--dim); font-family:'Barlow Condensed'; font-weight:800; font-size:14px; letter-spacing:.06em; cursor:pointer; }
+.fo-tog.fo-on { background:#E2A50E; border-color:#E2A50E; color:#0B130F; }
 .undobar { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 14px 0; }
 .undobar-last { font-family:'Barlow'; font-size:12px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .undo-btn { flex-shrink:0; background:var(--bg3); border:1px solid var(--line); border-radius:10px; padding:7px 14px; color:var(--text); font-family:'Barlow'; font-weight:700; font-size:13px; cursor:pointer; }
