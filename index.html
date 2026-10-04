@@ -7,7 +7,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" /><link rel="icon" type="image/png" href="icons/icon-192.png" />
 <style>html,body{margin:0;background:#0B130F;color:#EAF2EC;font-family:system-ui,sans-serif;-webkit-tap-highlight-color:transparent;overscroll-behavior:none;}#boot{display:flex;min-height:100vh;align-items:center;justify-content:center;letter-spacing:.18em;color:#8AA597;font-weight:800;}</style>
 </head><body><div id="root"><div id="boot">FACEOFF…</div></div>
-<script>window.__BUILD__="1791149728510";</script>
+<script>window.__BUILD__="1791149940790";</script>
 <script>window.__startFaceoff=function(){
 "use strict";
 var React=window.React,ReactDOM=window.ReactDOM;
@@ -699,6 +699,11 @@ function App() {
         if (a.key === "g") {
             setStatAssign(null);
             scoreGoal(player);
+            return;
+        }
+        if (a.key === "pen") {
+            setStatAssign(null);
+            setPenaltyPrompt({ team: "player", playerId: player.id, num: player.num, name: player.name });
             return;
         }
         if (a.teamKey) {
@@ -1578,7 +1583,8 @@ function App() {
                 React.createElement("div", { className: "team-block", style: { borderColor: settings.teamColor } },
                     React.createElement("div", { className: "team-name", style: { color: settings.teamColor } }, settings.teamName),
                     React.createElement("div", { className: "score" }, activeGame.scores.team),
-                    React.createElement("button", { className: "opp-goal", onClick: () => setStatAssign({ key: "g", label: "Goal", who: "Who scored?" }) }, "+ Goal")),
+                    React.createElement("button", { className: "opp-goal", onClick: () => setStatAssign({ key: "g", label: "Goal", who: "Who scored?" }) }, "+ Goal"),
+                    React.createElement("button", { className: "opp-goal sb-pen", onClick: () => setStatAssign({ key: "pen", label: "Penalty", who: "Who is the penalty on?" }) }, "Penalty")),
                 React.createElement("div", { className: "center-col" },
                     React.createElement("div", { className: "faceoff" }, "\u2715"),
                     React.createElement("button", { className: "clock", onClick: () => setRunning((r) => !r), onDoubleClick: () => { setRunning(false); const len = activeGame.period === otIndexFor(rules) ? rules.otLength : rules.periodLength; setSecLeft(len * 60); }, title: "Tap start/pause \u00B7 double-tap reset" },
@@ -1594,7 +1600,8 @@ function App() {
                 React.createElement("div", { className: "team-block", style: { borderColor: activeGame.oppColor } },
                     React.createElement("div", { className: "team-name", style: { color: activeGame.oppColor } }, activeGame.oppName),
                     React.createElement("div", { className: "score" }, activeGame.scores.opp),
-                    React.createElement("button", { className: "opp-goal", onClick: oppGoal }, "+ Goal"))),
+                    React.createElement("button", { className: "opp-goal", onClick: oppGoal }, "+ Goal"),
+                    React.createElement("button", { className: "opp-goal sb-pen", onClick: () => setPenaltyPrompt({ team: "opp" }) }, "Penalty"))),
             React.createElement("div", { className: "undobar" },
                 React.createElement("span", { className: "undobar-last" }, activeGame.log && activeGame.log.length ? `Last: ${describeEntry(activeGame.log[0])}` : "No actions yet"),
                 React.createElement("button", { className: "undo-btn", onClick: undoLast, disabled: !(activeGame.log && activeGame.log.length) }, "\u27F2 Undo")),
@@ -1669,11 +1676,9 @@ function App() {
                             "/",
                             ((activeGame.oppStats || {}).clr || 0) + ((activeGame.oppStats || {}).fclr || 0))),
                     React.createElement("div", { className: "pquick" },
-                        React.createElement("button", { className: "qbtn2", onClick: oppGoal }, "Goal"),
                         React.createElement("button", { className: "qbtn2", onClick: oppSog }, "SOG"),
-                        React.createElement("button", { className: "qbtn2", onClick: () => logOppStat("gb", "GB") }, "GB"),
                         React.createElement("button", { className: "qbtn2", onClick: () => logOppStat("ms", "Miss") }, "Miss"),
-                        React.createElement("button", { className: "qbtn2", onClick: () => setPenaltyPrompt({ team: "opp" }) }, "Penalty")),
+                        React.createElement("button", { className: "qbtn2", onClick: () => logOppStat("gb", "GB") }, "GB")),
                     React.createElement("div", { className: "pquick", style: { marginTop: 6 } },
                         React.createElement("button", { className: "qbtn2", onClick: () => logOppStat("clr", "Clear") }, "Clear"),
                         React.createElement("button", { className: "qbtn2", onClick: () => logOppStat("fclr", "Failed Clear") }, "Failed Clear"))),
@@ -2140,9 +2145,13 @@ function App() {
                         React.createElement("b", null, "FOW / FOL"),
                         " (faceoff won/lost) and ",
                         React.createElement("b", null, "CTO, TO, GB, SOG, Miss"),
-                        " all ask which player to credit. The opponent box has ",
-                        React.createElement("b", null, "Goal, SOG, GB, Miss, Penalty, Clear, Failed Clear"),
-                        " \u2014 an opponent ",
+                        " all ask which player to credit. Under each score there is also a ",
+                        React.createElement("b", null, "Penalty"),
+                        " button: yours asks which player and then the length, the opponent's asks just the length. The opponent box has ",
+                        React.createElement("b", null, "SOG, Miss, GB"),
+                        " on the first row and ",
+                        React.createElement("b", null, "Clear, Failed Clear"),
+                        " on the second \u2014 an opponent ",
                         React.createElement("b", null, "SOG"),
                         " is a shot your goalie stopped, so it also credits a ",
                         React.createElement("b", null, "save"),
@@ -3272,6 +3281,7 @@ const CSS = `
 .opp-goal { margin-top:10px; background:transparent; color:var(--text); border:1px solid var(--line); border-radius:999px;
   padding:6px 14px; font-family:'Barlow'; font-weight:600; font-size:13px; cursor:pointer; }
 .opp-goal:active { background:var(--bg3); }
+.sb-pen { margin-top:6px; color:#E2A50E; border-color:rgba(226,165,14,.45); }
 
 /* periods */
 .quickbar { display:flex; flex-wrap:wrap; gap:6px; padding:0 2px; }
