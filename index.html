@@ -7,7 +7,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" /><link rel="icon" type="image/png" href="icons/icon-192.png" />
 <style>html,body{margin:0;background:#0B130F;color:#EAF2EC;font-family:system-ui,sans-serif;-webkit-tap-highlight-color:transparent;overscroll-behavior:none;}#boot{display:flex;min-height:100vh;align-items:center;justify-content:center;letter-spacing:.18em;color:#8AA597;font-weight:800;}</style>
 </head><body><div id="root"><div id="boot">FACEOFF…</div></div>
-<script>window.__BUILD__="1791916242379";</script>
+<script>window.__BUILD__="1791916883572";</script>
 <script>window.__startFaceoff=function(){
 "use strict";
 var React=window.React,ReactDOM=window.ReactDOM;
@@ -597,8 +597,8 @@ function App() {
                     setSyncMsg("Cloud offline — using local data");
                 }
             }
-            if (next)
-                setState(next);
+            // always run the migration (also gives a brand-new install its first season)
+            setState(migrateState({ ...initialState, ...(next || {}) }));
             setLoaded(true);
         })();
     }, []);
@@ -1022,7 +1022,7 @@ function App() {
     /* ---------------------- schedule mutations ---------------------- */
     function createTournament(name) {
         const id = uid();
-        setState((prev) => ({ ...prev, tournaments: [...prev.tournaments, { id, name, seasonId: activeSeasonId }] }));
+        setState((prev) => ({ ...prev, tournaments: [...prev.tournaments, { id, name, seasonId: activeSeasonId, rules: { ...prev.rules, running: false }, schedule: [] }] }));
         return id;
     }
     function createGame(opts) {
@@ -1030,6 +1030,30 @@ function App() {
         setState((prev) => ({ ...prev, games: [...prev.games, g], activeGameId: g.id }));
         setTab("game");
         toast("Game started");
+        return g.id;
+    }
+    function updateTournament(id, patch) {
+        setState((prev) => ({ ...prev, tournaments: prev.tournaments.map((t) => (t.id === id ? { ...t, ...patch } : t)) }));
+    }
+    function addSlot(tid, slot) {
+        setState((prev) => ({ ...prev, tournaments: prev.tournaments.map((t) => (t.id === tid ? { ...t, schedule: [...(t.schedule || []), { id: uid(), ...slot }] } : t)) }));
+        toast(`Added vs ${slot.opp}`);
+    }
+    function removeSlot(tid, sid) {
+        setState((prev) => ({ ...prev, tournaments: prev.tournaments.map((t) => (t.id === tid ? { ...t, schedule: (t.schedule || []).filter((x) => x.id !== sid) } : t)) }));
+    }
+    // start a scheduled tournament game with that tournament's rules (or open it if already started)
+    function startSlot(tid, sid) {
+        const t = state.tournaments.find((x) => x.id === tid);
+        const sl = t && (t.schedule || []).find((x) => x.id === sid);
+        if (!sl)
+            return;
+        if (sl.gameId && state.games.some((g) => g.id === sl.gameId)) {
+            setActiveGame(sl.gameId);
+            return;
+        }
+        const gid = createGame({ tournamentId: tid, oppName: sl.opp || "Opponent", rules: t.rules ? { ...t.rules } : null });
+        setState((prev) => ({ ...prev, tournaments: prev.tournaments.map((x) => (x.id === tid ? { ...x, schedule: (x.schedule || []).map((y) => (y.id === sid ? { ...y, gameId: gid } : y)) } : x)) }));
     }
     function setActiveGame(id) { setState((prev) => ({ ...prev, activeGameId: id })); setTab("game"); }
     function deleteGame(id) {
@@ -1699,6 +1723,10 @@ function App() {
             const r = recordFor(counted);
             const recent = [...games].filter((g) => g.status === "final").sort((a, b) => String(b.date || "").localeCompare(String(a.date || ""))).slice(0, 3);
             const resLine = (g) => `${g.scores.team > g.scores.opp ? "W" : g.scores.team < g.scores.opp ? "L" : "T"} ${g.scores.team}–${g.scores.opp}`;
+            const upNext = [];
+            tournaments.forEach((t) => (t.schedule || []).forEach((sl) => { if (!sl.gameId || !state.games.some((g) => g.id === sl.gameId))
+                upNext.push({ t, sl }); }));
+            upNext.sort((a, b) => slotKey(a.sl).localeCompare(slotKey(b.sl)));
             return (React.createElement("section", { className: "setup" },
                 React.createElement("div", { className: "home-hero", style: { borderColor: settings.teamColor } },
                     React.createElement("div", { className: "home-hero-top" },
@@ -1735,6 +1763,20 @@ function App() {
                                 "\u2013",
                                 g.scores.opp)),
                         React.createElement("button", { className: "btn btn-sm btn-primary ag-edit", onClick: () => setActiveGame(g.id) }, "Resume")))))),
+                upNext.length > 0 && (React.createElement("div", { className: "card" },
+                    React.createElement("div", { className: "card-title" },
+                        "Up next ",
+                        React.createElement("span", { className: "count-pill" }, upNext.length)),
+                    upNext.slice(0, 4).map(({ t, sl }) => (React.createElement("div", { key: sl.id, className: "allgame" },
+                        React.createElement("div", { className: "ag-main" },
+                            React.createElement("div", { className: "ag-opp" },
+                                "vs ",
+                                sl.opp),
+                            React.createElement("div", { className: "ag-meta" },
+                                fmtSlot(sl),
+                                " \u00B7 ",
+                                t.name)),
+                        React.createElement("button", { className: "btn btn-sm btn-primary ag-edit", onClick: () => startSlot(t.id, sl.id) }, "Start")))))),
                 React.createElement("div", { className: "home-grid" },
                     React.createElement("button", { className: "home-tile home-tile-main", onClick: () => createGame({}) },
                         React.createElement("span", { className: "home-ico" }, "\u25B6"),
@@ -2217,7 +2259,7 @@ function App() {
                     React.createElement("button", { className: "btn btn-sm btn-primary", onClick: () => setShowExport(true) }, "Export")),
                 React.createElement(StatsTable, { roster: roster, map: agg.map, onSelectPlayer: (id) => setStatPlayer(id) }),
                 React.createElement("p", { className: "legend" }, "G goals \u00B7 A assists \u00B7 P points \u00B7 SOG shots on goal (goals + saved) \u00B7 Miss off-target \u00B7 Sh% goals per shot \u00B7 SOG% on-goal per shot \u00B7 GB ground balls \u00B7 FW/FL faceoffs \u00B7 FO% faceoff win \u00B7 CT caused TO \u00B7 TO turnovers \u00B7 Pen penalties \u00B7 Sv saves \u00B7 GA goals against \u00B7 Sv% save \u00B7 TO turnovers \u00B7 DB drop balls"))))),
-        tab === "schedule" && (React.createElement(ScheduleView, { state: { ...state, games, tournaments }, onCreateGame: createGame, onCreateTournament: createTournament, onOpenGame: setActiveGame, onDeleteGame: deleteGame, onDeleteTournament: deleteTournament, activeGameId: state.activeGameId })),
+        tab === "schedule" && (React.createElement(ScheduleView, { state: { ...state, games, tournaments }, onCreateGame: createGame, onCreateTournament: createTournament, onOpenGame: setActiveGame, onDeleteGame: deleteGame, onDeleteTournament: deleteTournament, activeGameId: state.activeGameId, onUpdateTournament: updateTournament, onAddSlot: addSlot, onRemoveSlot: removeSlot, onStartSlot: startSlot })),
         tab === "setup" && (React.createElement("section", { className: "setup" },
             React.createElement("div", { className: "card" },
                 React.createElement("div", { className: "card-title" }, "How to use FACEOFF"),
@@ -2386,6 +2428,15 @@ function App() {
                         "; GB pops up your midfielders and LSM (position LSM, or the ",
                         React.createElement("b", null, "LSM"),
                         " box ticked in the roster) to credit the ground ball. The box keeps showing the last player you picked."),
+                    React.createElement("div", { className: "help-p" },
+                        React.createElement("b", null, "Tournaments"),
+                        " (Schedule tab): add one, then tap ",
+                        React.createElement("b", null, "Setup"),
+                        " to pick its rules (quarters or halves, game length, overtime, running clock) and enter the schedule, opponent plus date and start time. Every game started from a tournament uses its rules. Scheduled games show on Home under ",
+                        React.createElement("b", null, "Up next"),
+                        "; tap ",
+                        React.createElement("b", null, "Start"),
+                        " when the game begins."),
                     React.createElement("div", { className: "help-h" }, "Quick stat buttons (your team box)"),
                     React.createElement("div", { className: "help-p" },
                         React.createElement("b", null, "Clear"),
@@ -3369,7 +3420,110 @@ function PlayerBreakdown({ player, games, scopeTitle, teamColor, tournamentName,
                             React.createElement("td", null, tot.ga)))))))));
 }
 /* ----------------------- schedule view ----------------------- */
-function ScheduleView({ state, onCreateGame, onCreateTournament, onOpenGame, onDeleteGame, onDeleteTournament, activeGameId }) {
+// "Sat, Oct 17 · 9:00 AM" for a scheduled tournament game
+function fmtSlot(sl) {
+    let d = "";
+    if (sl.date) {
+        try {
+            d = new Date(sl.date + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+        }
+        catch (e) {
+            d = sl.date;
+        }
+    }
+    let t = "";
+    if (sl.time) {
+        const [h, m] = sl.time.split(":").map(Number);
+        if (!isNaN(h))
+            t = `${((h + 11) % 12) + 1}:${String(m || 0).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+    }
+    return [d, t].filter(Boolean).join(" · ") || "No date/time set";
+}
+const slotKey = (sl) => (sl.date || "9999-99-99") + " " + (sl.time || "99:99");
+function TournamentCard({ t, games, defaultRules, open, onToggle, onUpdate, onAddSlot, onRemoveSlot, onStartSlot, onDelete, renderGame }) {
+    const [opp, setOpp] = useState("");
+    const [date, setDate] = useState(today());
+    const [time, setTime] = useState("");
+    const r = { ...defaultRules, running: false, ...(t.rules || {}) };
+    const setR = (k, v) => onUpdate(t.id, { rules: { ...r, [k]: v } });
+    const tg = games.filter((g) => g.tournamentId === t.id);
+    const rec = recordFor(tg);
+    const slots = [...(t.schedule || [])].sort((a, b) => slotKey(a).localeCompare(slotKey(b)));
+    const linked = new Set(slots.map((s) => s.gameId).filter(Boolean));
+    const loose = tg.filter((g) => !linked.has(g.id));
+    function add() {
+        const o = opp.trim();
+        if (!o)
+            return;
+        onAddSlot(t.id, { opp: o, date, time });
+        setOpp("");
+        setTime("");
+    }
+    return (React.createElement("div", { className: "tgroup" },
+        React.createElement("div", { className: "tgroup-head" },
+            React.createElement("span", { className: "tgroup-name" }, t.name),
+            React.createElement("span", { className: "tgroup-rec" },
+                rec.w,
+                "-",
+                rec.l,
+                "-",
+                rec.t,
+                " \u00B7 ",
+                tg.length,
+                "g"),
+            React.createElement("button", { className: `tsetup-btn ${open ? "tsetup-on" : ""}`, onClick: () => onToggle(t.id) }, open ? "Done" : "Setup"),
+            React.createElement("button", { className: "tgroup-del", onClick: () => onDelete(t.id), "aria-label": "delete tournament" }, "\u2715")),
+        React.createElement("div", { className: "trules-line" },
+            r.periodType === "halves" ? "2 halves" : "4 quarters",
+            " \u00B7 ",
+            r.periodLength,
+            " min \u00B7 OT ",
+            r.otLength,
+            " min \u00B7 ",
+            r.running ? "running clock" : "stop clock"),
+        open && (React.createElement("div", { className: "tpanel" },
+            React.createElement("div", { className: "tpanel-h" }, "Rules for every game in this tournament"),
+            React.createElement("div", { className: "seg" }, [["quarters", "4 Quarters"], ["halves", "2 Halves"]].map(([v, lab]) => (React.createElement("button", { key: v, className: `seg-btn ${r.periodType === v ? "seg-on" : ""}`, onClick: () => setR("periodType", v) }, lab)))),
+            React.createElement("div", { className: "rule-row" },
+                React.createElement("span", { className: "rule-label" }, r.periodType === "halves" ? "Half length" : "Quarter length"),
+                React.createElement(Stepper, { value: r.periodLength, min: 1, max: 30, onChange: (v) => setR("periodLength", v), suffix: "min" })),
+            React.createElement("div", { className: "rule-row" },
+                React.createElement("span", { className: "rule-label" }, "Overtime length"),
+                React.createElement(Stepper, { value: r.otLength, min: 1, max: 20, onChange: (v) => setR("otLength", v), suffix: "min" })),
+            React.createElement("label", { className: "row-toggle", style: { marginTop: 10 } },
+                React.createElement("span", null, "Running clock"),
+                React.createElement("input", { type: "checkbox", checked: !!r.running, onChange: (e) => setR("running", e.target.checked) })),
+            React.createElement("div", { className: "tpanel-h", style: { marginTop: 14 } }, "Add a game to the schedule"),
+            React.createElement("input", { className: "field", placeholder: "Opponent", value: opp, onChange: (e) => setOpp(e.target.value), onKeyDown: (e) => e.key === "Enter" && add() }),
+            React.createElement("div", { className: "slot-add" },
+                React.createElement("input", { className: "field", type: "date", value: date, onChange: (e) => setDate(e.target.value), "aria-label": "date" }),
+                React.createElement("input", { className: "field", type: "time", value: time, onChange: (e) => setTime(e.target.value), "aria-label": "start time" }),
+                React.createElement("button", { className: "btn btn-primary btn-add", onClick: add }, "Add")))),
+        slots.length === 0 && loose.length === 0 && React.createElement("div", { className: "tgroup-empty" },
+            "No games yet",
+            open ? "" : " — tap Setup to add the schedule"),
+        slots.map((sl) => {
+            const g = sl.gameId ? games.find((x) => x.id === sl.gameId) : null;
+            return (React.createElement("div", { key: sl.id, className: "slot-row" },
+                React.createElement("div", { className: "ag-main" },
+                    React.createElement("div", { className: "ag-opp" },
+                        "vs ",
+                        sl.opp),
+                    React.createElement("div", { className: "ag-meta" },
+                        fmtSlot(sl),
+                        g ? ` · ${g.status === "final" ? "Final" : "In progress"}` : "")),
+                g ? (React.createElement(React.Fragment, null,
+                    React.createElement("div", { className: `ag-score ag-${g.scores.team > g.scores.opp ? "W" : g.scores.team < g.scores.opp ? "L" : "T"}` },
+                        g.scores.team,
+                        "\u2013",
+                        g.scores.opp),
+                    React.createElement("button", { className: "btn btn-sm ag-edit", onClick: () => onStartSlot(t.id, sl.id) }, "Open"))) : (React.createElement(React.Fragment, null,
+                    React.createElement("button", { className: "btn btn-sm btn-primary ag-edit", onClick: () => onStartSlot(t.id, sl.id) }, "Start"),
+                    React.createElement("button", { className: "tgroup-del", onClick: () => onRemoveSlot(t.id, sl.id), "aria-label": "remove from schedule" }, "\u2715")))));
+        }),
+        loose.map((g) => renderGame(g))));
+}
+function ScheduleView({ state, onCreateGame, onCreateTournament, onOpenGame, onDeleteGame, onDeleteTournament, activeGameId, onUpdateTournament, onAddSlot, onRemoveSlot, onStartSlot }) {
     const { tournaments, games } = state;
     const [opp, setOpp] = useState("");
     const [color, setColor] = useState("#FF7A45");
@@ -3379,8 +3533,19 @@ function ScheduleView({ state, onCreateGame, onCreateTournament, onOpenGame, onD
     const [gPeriodType, setGPeriodType] = useState(state.rules.periodType);
     const [gLen, setGLen] = useState(state.rules.periodLength);
     const [gRunning, setGRunning] = useState(false);
+    const [openT, setOpenT] = useState(null);
+    function pickT(id) {
+        setTid(id);
+        const t = tournaments.find((x) => x.id === id);
+        if (t && t.rules) {
+            setGPeriodType(t.rules.periodType);
+            setGLen(t.rules.periodLength);
+            setGRunning(!!t.rules.running);
+        }
+    }
     function start() {
-        const rules = { periodType: gPeriodType, periodLength: gLen, otLength: state.rules.otLength, running: gRunning };
+        const tr = (tournaments.find((x) => x.id === tid) || {}).rules;
+        const rules = { periodType: gPeriodType, periodLength: gLen, otLength: (tr && tr.otLength) || state.rules.otLength, running: gRunning };
         onCreateGame({ tournamentId: tid, oppName: opp.trim() || "Opponent", oppColor: color, scrimmage: scrim, rules });
         setOpp("");
     }
@@ -3391,6 +3556,7 @@ function ScheduleView({ state, onCreateGame, onCreateTournament, onOpenGame, onD
         const id = onCreateTournament(n);
         setTname("");
         setTid(id);
+        setOpenT(id);
     }
     const gamesFor = (tournamentId) => games.filter((g) => g.tournamentId === tournamentId);
     const ungrouped = games.filter((g) => !g.tournamentId);
@@ -3437,8 +3603,8 @@ function ScheduleView({ state, onCreateGame, onCreateTournament, onOpenGame, onD
             React.createElement("div", { className: "swatches" }, COLOR_PRESETS.map((c) => (React.createElement("button", { key: c, className: `swatch ${color === c ? "swatch-on" : ""}`, style: { background: c }, onClick: () => setColor(c), "aria-label": `color ${c}` })))),
             React.createElement("label", { className: "field-label" }, "Tournament"),
             React.createElement("div", { className: "chiprow" },
-                React.createElement("button", { className: `tchip ${tid === null ? "tchip-on" : ""}`, onClick: () => setTid(null) }, "None"),
-                tournaments.map((t) => (React.createElement("button", { key: t.id, className: `tchip ${tid === t.id ? "tchip-on" : ""}`, onClick: () => setTid(t.id) }, t.name)))),
+                React.createElement("button", { className: `tchip ${tid === null ? "tchip-on" : ""}`, onClick: () => pickT(null) }, "None"),
+                tournaments.map((t) => (React.createElement("button", { key: t.id, className: `tchip ${tid === t.id ? "tchip-on" : ""}`, onClick: () => pickT(t.id) }, t.name)))),
             React.createElement("label", { className: "field-label", style: { marginTop: 12 } }, "Format"),
             React.createElement("div", { className: "seg" }, [["quarters", "4 Quarters"], ["halves", "2 Halves"]].map(([v, lab]) => (React.createElement("button", { key: v, className: `seg-btn ${gPeriodType === v ? "seg-on" : ""}`, onClick: () => setGPeriodType(v) }, lab)))),
             React.createElement("div", { className: "rule-row" },
@@ -3460,26 +3626,8 @@ function ScheduleView({ state, onCreateGame, onCreateTournament, onOpenGame, onD
             React.createElement("div", { className: "addrow" },
                 React.createElement("input", { className: "field", placeholder: "Tournament name", value: tname, onChange: (e) => setTname(e.target.value), onKeyDown: (e) => e.key === "Enter" && addTournament() }),
                 React.createElement("button", { className: "btn btn-primary btn-add", onClick: addTournament }, "Add")),
-            tournaments.map((t) => {
-                const tg = gamesFor(t.id);
-                const r = recordFor(tg);
-                return (React.createElement("div", { key: t.id, className: "tgroup" },
-                    React.createElement("div", { className: "tgroup-head" },
-                        React.createElement("span", { className: "tgroup-name" }, t.name),
-                        React.createElement("span", { className: "tgroup-rec" },
-                            r.w,
-                            "-",
-                            r.l,
-                            "-",
-                            r.t,
-                            " \u00B7 ",
-                            tg.length,
-                            "g"),
-                        React.createElement("button", { className: "tgroup-del", onClick: () => onDeleteTournament(t.id), "aria-label": "delete tournament" }, "\u2715")),
-                    tg.length === 0 ? React.createElement("div", { className: "tgroup-empty" }, "No games yet") :
-                        tg.map((g) => React.createElement(GameRow, { key: g.id, g: g }))));
-            }),
-            tournaments.length === 0 && React.createElement("p", { className: "legend" }, "Create a tournament, then start games inside it to see grouped totals in Stats.")),
+            tournaments.map((t) => (React.createElement(TournamentCard, { key: t.id, t: t, games: games, defaultRules: state.rules, open: openT === t.id, onToggle: (id) => setOpenT(openT === id ? null : id), onUpdate: onUpdateTournament, onAddSlot: onAddSlot, onRemoveSlot: onRemoveSlot, onStartSlot: onStartSlot, onDelete: onDeleteTournament, renderGame: (g) => React.createElement(GameRow, { key: g.id, g: g }) }))),
+            tournaments.length === 0 && React.createElement("p", { className: "legend" }, "Name a tournament and tap Add. Then set its rules (game length, halves or quarters, running clock) and enter the schedule: opponents with dates and start times. Tap Start on a game when it begins.")),
         React.createElement("div", { className: "card" },
             React.createElement("div", { className: "card-title" },
                 "Saved games ",
@@ -3795,6 +3943,14 @@ const CSS = `
 .tgroup-name { font-family:'Barlow Condensed'; font-weight:700; font-size:15px; letter-spacing:.03em; flex:1; }
 .tgroup-rec { font-size:12px; color:var(--dim); font-variant-numeric:tabular-nums; }
 .tgroup-del { background:transparent; border:none; color:var(--dim); font-size:12px; cursor:pointer; padding:4px; }
+.tsetup-btn { background:transparent; border:1px solid var(--line); color:var(--text); border-radius:8px; padding:4px 10px; font-size:12px; font-weight:700; cursor:pointer; }
+.tsetup-btn.tsetup-on { background:var(--gold); border-color:var(--gold); color:#0B130F; }
+.trules-line { padding:6px 12px; font-size:11.5px; color:var(--dim); border-bottom:1px solid var(--line); }
+.tpanel { padding:12px; border-bottom:1px solid var(--line); background:rgba(255,255,255,.015); }
+.tpanel-h { font-family:'Barlow Condensed'; font-weight:800; font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); margin-bottom:8px; }
+.slot-add { display:flex; gap:8px; margin-top:8px; }
+.slot-add .field { flex:1; min-width:0; }
+.slot-row { display:flex; align-items:center; gap:8px; padding:10px 12px; border-top:1px solid var(--line); }
 .tgroup-empty { padding:10px 12px; color:var(--dim); font-size:13px; }
 .home-hero { margin:12px 14px 0; padding:16px 16px 14px; background:linear-gradient(180deg, var(--bg2), #101a15); border:1px solid var(--line); border-top:3px solid; border-radius:16px; }
 .home-hero-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
