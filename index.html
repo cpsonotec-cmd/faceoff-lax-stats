@@ -7,7 +7,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" /><link rel="icon" type="image/png" href="icons/icon-192.png" />
 <style>html,body{margin:0;background:#0B130F;color:#EAF2EC;font-family:system-ui,sans-serif;-webkit-tap-highlight-color:transparent;overscroll-behavior:none;}#boot{display:flex;min-height:100vh;align-items:center;justify-content:center;letter-spacing:.18em;color:#8AA597;font-weight:800;}</style>
 </head><body><div id="root"><div id="boot">FACEOFF…</div></div>
-<script>window.__BUILD__="1791152870752";</script>
+<script>window.__BUILD__="1791916242379";</script>
 <script>window.__startFaceoff=function(){
 "use strict";
 var React=window.React,ReactDOM=window.ReactDOM;
@@ -207,6 +207,8 @@ const initialState = {
     tournaments: [], // {id, name}
     games: [], // see makeGame
     activeGameId: null,
+    seasons: [], // {id, name, created}
+    activeSeasonId: null,
 };
 const makeGame = ({ tournamentId = null, oppName = "Opponent", oppColor = "#FF7A45", goalieId = null, scrimmage = false, rules = null }) => ({
     id: uid(),
@@ -253,6 +255,23 @@ function migrateState(s) {
                 g.teamStats = ts;
             }
         });
+    }
+    // seasons: make sure there is at least one, and tag untagged games/tournaments with it
+    if (s && typeof s === "object") {
+        if (!Array.isArray(s.seasons))
+            s.seasons = [];
+        if (!s.seasons.length) {
+            const ds = (s.games || []).map((g) => g && g.date).filter(Boolean).sort();
+            const yr = (ds[0] || new Date().toISOString()).slice(0, 4);
+            s.seasons.push({ id: "season-default", name: yr + " Season", created: ds[0] || new Date().toISOString().slice(0, 10) });
+        }
+        if (!s.activeSeasonId || !s.seasons.some((x) => x.id === s.activeSeasonId))
+            s.activeSeasonId = s.seasons[s.seasons.length - 1].id;
+        const home = s.seasons[0].id;
+        (s.games || []).forEach((g) => { if (g && !g.seasonId)
+            g.seasonId = home; });
+        (s.tournaments || []).forEach((t) => { if (t && !t.seasonId)
+            t.seasonId = home; });
     }
     return s;
 }
@@ -522,6 +541,9 @@ function App() {
     const [showSelfCheck, setShowSelfCheck] = useState(false); // stat-engine self-check
     const [showHelp, setShowHelp] = useState(false); // in-app guide
     const [foPrompt, setFoPrompt] = useState(null); // face-off pop-up: { started }
+    const [homeView, setHomeView] = useState("seasons"); // home: "seasons" list or inside a "season"
+    const [newSeasonName, setNewSeasonName] = useState("");
+    const [renaming, setRenaming] = useState(null); // { id, name }
     const [confirmBox, setConfirmBox] = useState(null); // { message, onConfirm, requireType? }
     const [confirmType, setConfirmType] = useState(""); // text typed into a type-to-confirm box
     function askConfirm(message, onConfirm) { setConfirmType(""); setConfirmBox({ message, onConfirm }); }
@@ -641,8 +663,14 @@ function App() {
         }
         return () => clearTimeout(saveTimer.current);
     }, [state, loaded]);
-    const { settings, roster, tournaments, games } = state;
-    const activeGame = games.find((g) => g.id === state.activeGameId) || null;
+    const { settings, roster } = state;
+    const seasons = state.seasons || [];
+    const activeSeasonId = state.activeSeasonId || (seasons[seasons.length - 1] || {}).id || null;
+    const activeSeason = seasons.find((x) => x.id === activeSeasonId) || null;
+    const inSeason = (x) => !activeSeasonId || x.seasonId === activeSeasonId;
+    const games = state.games.filter(inSeason);
+    const tournaments = state.tournaments.filter(inSeason);
+    const activeGame = state.games.find((g) => g.id === state.activeGameId) || null;
     // each game can carry its own rules (chosen at creation); fall back to team defaults
     const rules = (activeGame && activeGame.rules) || state.rules;
     // clock: countdown from configured period length; reset on game/period/rules change
@@ -790,6 +818,7 @@ function App() {
         setState((prev) => ({ ...prev, activeGameId: null }));
         if (scope === "game")
             setScope("season");
+        setHomeView("season");
         setTab("home");
         toast("Game kept — resume it from Home");
     }
@@ -801,6 +830,7 @@ function App() {
         setState((prev) => ({ ...prev, activeGameId: null, games: prev.games.map((g) => (g.id === id ? { ...g, status: "final" } : g)) }));
         if (scope === "game")
             setScope("season");
+        setHomeView("season");
         setTab("home");
         toast("Game saved as Final");
     }
@@ -992,11 +1022,11 @@ function App() {
     /* ---------------------- schedule mutations ---------------------- */
     function createTournament(name) {
         const id = uid();
-        setState((prev) => ({ ...prev, tournaments: [...prev.tournaments, { id, name }] }));
+        setState((prev) => ({ ...prev, tournaments: [...prev.tournaments, { id, name, seasonId: activeSeasonId }] }));
         return id;
     }
     function createGame(opts) {
-        const g = makeGame({ ...opts, goalieId: settings.defaultGoalieId || null });
+        const g = { ...makeGame({ ...opts, goalieId: settings.defaultGoalieId || null }), seasonId: activeSeasonId };
         setState((prev) => ({ ...prev, games: [...prev.games, g], activeGameId: g.id }));
         setTab("game");
         toast("Game started");
@@ -1061,7 +1091,7 @@ function App() {
     }
     else {
         scopeGames = games;
-        scopeTitle = "Full season";
+        scopeTitle = (activeSeason && activeSeason.name) || "Full season";
     }
     // scrimmages are excluded from tournament/season stats unless the user opts in
     if (scope !== "game" && !includeScrims)
@@ -1157,7 +1187,7 @@ function App() {
             gs = g ? [g] : [];
         }
         else {
-            title = "Full season";
+            title = (activeSeason && activeSeason.name) || "Full season";
             gs = games;
         }
         setShowExport(false);
@@ -1430,12 +1460,31 @@ function App() {
         reader.onerror = () => toast("Couldn't read that file");
         reader.readAsText(file);
     }
-    function startNewSeason() {
-        askConfirm("Start a new season? Keeps your team, roster, and rules; clears all tournaments and games.", () => {
-            setState((prev) => ({ ...prev, tournaments: [], games: [], activeGameId: null }));
-            setTab("game");
-            toast("New season started");
-        });
+    function startNewSeason() { setHomeView("seasons"); setTab("home"); }
+    function createSeason(name) {
+        const nm = (name || "").trim();
+        if (!nm) {
+            toast("Give the season a name");
+            return;
+        }
+        const id = "season-" + uid();
+        setState((prev) => ({ ...prev, seasons: [...(prev.seasons || []), { id, name: nm, created: today() }], activeSeasonId: id, activeGameId: null }));
+        setScope("season");
+        setHomeView("season");
+        toast(`${nm} started`);
+    }
+    function enterSeason(id) {
+        setState((prev) => ({ ...prev, activeSeasonId: id, activeGameId: (prev.games.find((g) => g.id === prev.activeGameId) || {}).seasonId === id ? prev.activeGameId : null }));
+        if (scope === "game")
+            setScope("season");
+        setScopeTourney(null);
+        setHomeView("season");
+    }
+    function renameSeason(id, name) {
+        const nm = (name || "").trim();
+        if (!nm)
+            return;
+        setState((prev) => ({ ...prev, seasons: (prev.seasons || []).map((x) => (x.id === id ? { ...x, name: nm } : x)) }));
     }
     /* ---------------------- voice logging ---------------------- */
     function matchPlayerByName(transcript) {
@@ -1590,7 +1639,61 @@ function App() {
                 "FACEOFF",
                 React.createElement("span", { className: "brand-sub" }, "Lax Stats")),
             React.createElement("div", { className: "brand-sub" }, "Boys lacrosse \u00B7 season tracker")),
-        tab === "home" && (() => {
+        tab === "home" && homeView === "seasons" && (() => {
+            const list = [...seasons].reverse();
+            return (React.createElement("section", { className: "setup" },
+                React.createElement("div", { className: "home-hero", style: { borderColor: settings.teamColor } },
+                    React.createElement("div", { className: "home-team", style: { color: settings.teamColor } }, settings.teamName),
+                    React.createElement("div", { className: "home-rec" },
+                        "Seasons ",
+                        React.createElement("span", null,
+                            seasons.length,
+                            " \u00B7 ",
+                            roster.length,
+                            " players"))),
+                React.createElement("div", { className: "card" },
+                    React.createElement("div", { className: "card-title" }, "Your seasons"),
+                    list.map((sn) => {
+                        const sg = state.games.filter((g) => g.seasonId === sn.id);
+                        const r = recordFor(sg.filter((g) => !g.scrimmage && g.status === "final"));
+                        const live = sg.filter((g) => g.status !== "final").length;
+                        const isCur = sn.id === activeSeasonId;
+                        return (React.createElement("div", { key: sn.id, className: `season-row ${isCur ? "season-cur" : ""}` },
+                            renaming && renaming.id === sn.id ? (React.createElement("div", { className: "season-main" },
+                                React.createElement("input", { className: "field", autoFocus: true, value: renaming.name, onChange: (e) => setRenaming({ ...renaming, name: e.target.value }), onKeyDown: (e) => { if (e.key === "Enter") {
+                                        renameSeason(sn.id, renaming.name);
+                                        setRenaming(null);
+                                    } } }))) : (React.createElement("div", { className: "season-main" },
+                                React.createElement("div", { className: "season-name" },
+                                    sn.name,
+                                    isCur ? React.createElement("span", { className: "season-tag" }, "CURRENT") : null),
+                                React.createElement("div", { className: "ag-meta" },
+                                    r.w,
+                                    "-",
+                                    r.l,
+                                    r.t ? "-" + r.t : "",
+                                    " \u00B7 ",
+                                    sg.length,
+                                    " game",
+                                    sg.length === 1 ? "" : "s",
+                                    live ? ` · ${live} in progress` : "",
+                                    " \u00B7 started ",
+                                    fmtDate(sn.created)))),
+                            renaming && renaming.id === sn.id ? (React.createElement("button", { className: "btn btn-sm btn-primary ag-edit", onClick: () => { renameSeason(sn.id, renaming.name); setRenaming(null); } }, "Save")) : (React.createElement(React.Fragment, null,
+                                React.createElement("button", { className: "season-pen", onClick: () => setRenaming({ id: sn.id, name: sn.name }), "aria-label": "rename season" }, "\u270E"),
+                                React.createElement("button", { className: `btn btn-sm ag-edit ${isCur ? "btn-primary" : ""}`, onClick: () => enterSeason(sn.id) }, "Enter")))));
+                    })),
+                React.createElement("div", { className: "card" },
+                    React.createElement("div", { className: "card-title" }, "Start a new season"),
+                    React.createElement("p", { className: "legend", style: { marginTop: 0 } }, "Keeps your team, roster and rules. Your other seasons and their stats stay saved here."),
+                    React.createElement("div", { className: "addrow" },
+                        React.createElement("input", { className: "field", placeholder: "Season name (e.g. Spring 2027)", value: newSeasonName, onChange: (e) => setNewSeasonName(e.target.value), onKeyDown: (e) => { if (e.key === "Enter") {
+                                createSeason(newSeasonName);
+                                setNewSeasonName("");
+                            } } }),
+                        React.createElement("button", { className: "btn btn-primary btn-add", onClick: () => { createSeason(newSeasonName); setNewSeasonName(""); } }, "Start")))));
+        })(),
+        tab === "home" && homeView !== "seasons" && (() => {
             const live = games.filter((g) => g.status !== "final");
             const counted = games.filter((g) => !g.scrimmage && g.status === "final");
             const r = recordFor(counted);
@@ -1598,7 +1701,10 @@ function App() {
             const resLine = (g) => `${g.scores.team > g.scores.opp ? "W" : g.scores.team < g.scores.opp ? "L" : "T"} ${g.scores.team}–${g.scores.opp}`;
             return (React.createElement("section", { className: "setup" },
                 React.createElement("div", { className: "home-hero", style: { borderColor: settings.teamColor } },
-                    React.createElement("div", { className: "home-team", style: { color: settings.teamColor } }, settings.teamName),
+                    React.createElement("div", { className: "home-hero-top" },
+                        React.createElement("div", { className: "home-team", style: { color: settings.teamColor } }, settings.teamName),
+                        React.createElement("button", { className: "gh-act", onClick: () => setHomeView("seasons") }, "Seasons")),
+                    React.createElement("div", { className: "home-season" }, activeSeason ? activeSeason.name : "Season"),
                     React.createElement("div", { className: "home-rec" },
                         r.w,
                         "-",
@@ -1606,7 +1712,6 @@ function App() {
                         r.t ? "-" + r.t : "",
                         " ",
                         React.createElement("span", null,
-                            "season \u00B7 ",
                             games.length,
                             " game",
                             games.length === 1 ? "" : "s",
@@ -2112,7 +2217,7 @@ function App() {
                     React.createElement("button", { className: "btn btn-sm btn-primary", onClick: () => setShowExport(true) }, "Export")),
                 React.createElement(StatsTable, { roster: roster, map: agg.map, onSelectPlayer: (id) => setStatPlayer(id) }),
                 React.createElement("p", { className: "legend" }, "G goals \u00B7 A assists \u00B7 P points \u00B7 SOG shots on goal (goals + saved) \u00B7 Miss off-target \u00B7 Sh% goals per shot \u00B7 SOG% on-goal per shot \u00B7 GB ground balls \u00B7 FW/FL faceoffs \u00B7 FO% faceoff win \u00B7 CT caused TO \u00B7 TO turnovers \u00B7 Pen penalties \u00B7 Sv saves \u00B7 GA goals against \u00B7 Sv% save \u00B7 TO turnovers \u00B7 DB drop balls"))))),
-        tab === "schedule" && (React.createElement(ScheduleView, { state: state, onCreateGame: createGame, onCreateTournament: createTournament, onOpenGame: setActiveGame, onDeleteGame: deleteGame, onDeleteTournament: deleteTournament, activeGameId: state.activeGameId })),
+        tab === "schedule" && (React.createElement(ScheduleView, { state: { ...state, games, tournaments }, onCreateGame: createGame, onCreateTournament: createTournament, onOpenGame: setActiveGame, onDeleteGame: deleteGame, onDeleteTournament: deleteTournament, activeGameId: state.activeGameId })),
         tab === "setup" && (React.createElement("section", { className: "setup" },
             React.createElement("div", { className: "card" },
                 React.createElement("div", { className: "card-title" }, "How to use FACEOFF"),
@@ -2146,8 +2251,8 @@ function App() {
                 React.createElement("button", { className: "btn btn-block", onClick: exportRoster }, "Share roster code"),
                 React.createElement("button", { className: "btn btn-block", onClick: () => { setImportText(""); setImportKind("roster"); } }, "Import roster"),
                 React.createElement("div", { className: "card-sub" }, "New season"),
-                React.createElement("button", { className: "btn btn-block", onClick: startNewSeason }, "Start new season (keep team)"),
-                React.createElement("p", { className: "legend", style: { marginTop: 8 } }, "A backup captures everything (roster, tournaments, games, stats). The roster code shares just your players with anyone using this app. Starting a new season keeps your team and rules but clears games \u2014 export a backup first to save the old one.")),
+                React.createElement("button", { className: "btn btn-block", onClick: startNewSeason }, "Start or switch season"),
+                React.createElement("p", { className: "legend", style: { marginTop: 8 } }, "A backup captures everything (roster, tournaments, games, stats). The roster code shares just your players with anyone using this app. Seasons are managed on Home: starting a new season keeps your team, roster and rules, and older seasons stay saved and can be reopened any time.")),
             React.createElement("div", { className: "card" },
                 React.createElement("div", { className: "card-title" }, "Cloud sync (Supabase)"),
                 React.createElement("p", { className: "legend", style: { marginTop: 0 } }, "Back up and sync across devices to your Supabase database. The app stays offline-first; changes push to Supabase when connected."),
@@ -2255,8 +2360,12 @@ function App() {
                         " (leave the game as it is and go to Home) and ",
                         React.createElement("b", null, "Save game"),
                         " (mark it Final). The app opens on ",
+                        React.createElement("b", null, "Seasons"),
+                        ": tap ",
+                        React.createElement("b", null, "Enter"),
+                        " on a season (\u270E renames it) or name and start a new one; older seasons stay saved. Inside a season, ",
                         React.createElement("b", null, "Home"),
-                        ", where you can start a Quick game, set up a new game, resume one in progress, or jump to stats and setup. Every game is listed under ",
+                        " lets you start a Quick game, set up a new game, resume one in progress, or jump to stats and setup. Every game is listed under ",
                         React.createElement("b", null, "Schedule \u2192 All games"),
                         " with its score; tap ",
                         React.createElement("b", null, "Edit"),
@@ -2365,8 +2474,8 @@ function App() {
                         " can be pasted onto another device. ",
                         React.createElement("b", null, "Cloud sync (Supabase)"),
                         " keeps your devices in sync automatically. ",
-                        React.createElement("b", null, "Start new season"),
-                        " keeps your team and roster but clears games \u2014 back up first."))))),
+                        React.createElement("b", null, "Start a new season"),
+                        " from the Seasons screen; it keeps your team and roster, and past seasons stay saved."))))),
         showExport && (React.createElement("div", { className: "overlay", onClick: () => setShowExport(false) },
             React.createElement("div", { className: "sheet tall", onClick: (e) => e.stopPropagation() },
                 React.createElement("div", { className: "sheet-head" },
@@ -3688,6 +3797,14 @@ const CSS = `
 .tgroup-del { background:transparent; border:none; color:var(--dim); font-size:12px; cursor:pointer; padding:4px; }
 .tgroup-empty { padding:10px 12px; color:var(--dim); font-size:13px; }
 .home-hero { margin:12px 14px 0; padding:16px 16px 14px; background:linear-gradient(180deg, var(--bg2), #101a15); border:1px solid var(--line); border-top:3px solid; border-radius:16px; }
+.home-hero-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.home-season { font-family:'Barlow Condensed'; font-weight:700; font-size:15px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); margin-top:6px; }
+.season-row { display:flex; align-items:center; gap:8px; padding:11px 4px; border-top:1px solid var(--line); }
+.card-title + .season-row { border-top:none; }
+.season-main { flex:1; min-width:0; }
+.season-name { font-family:'Barlow Condensed'; font-weight:800; font-size:18px; letter-spacing:.02em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.season-tag { font-family:'Barlow'; font-size:9px; font-weight:800; letter-spacing:.08em; background:rgba(255,194,71,.18); color:var(--gold); padding:2px 6px; border-radius:4px; margin-left:8px; vertical-align:3px; }
+.season-pen { background:transparent; border:none; color:var(--dim); font-size:16px; padding:6px; cursor:pointer; }
 .home-team { font-family:'Barlow Condensed'; font-weight:800; font-size:26px; letter-spacing:.06em; text-transform:uppercase; line-height:1; }
 .home-rec { font-family:'Barlow Condensed'; font-weight:800; font-size:22px; margin-top:6px; }
 .home-rec span { font-family:'Barlow'; font-weight:500; font-size:12px; color:var(--dim); margin-left:6px; }
@@ -3733,7 +3850,7 @@ const CSS = `
 
 /* tab bar */
 .tabbar { position:fixed; bottom:0; left:50%; transform:translateX(-50%); width:100%; max-width:520px; display:flex;
-  background:rgba(11,19,15,0.94); backdrop-filter:blur(12px); border-top:1px solid var(--line); }
+  background:rgba(11,19,15,0.94); backdrop-filter:blur(12px); border-top:1px solid var(--line); z-index:40; }
 .tab { flex:1; background:transparent; border:none; color:var(--dim); cursor:pointer; padding:11px 0 15px;
   font-family:'Barlow'; font-weight:600; font-size:11.5px; display:flex; flex-direction:column; align-items:center; gap:4px; }
 .tab-ico { font-size:15px; }
