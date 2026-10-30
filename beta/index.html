@@ -7,7 +7,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" /><link rel="icon" type="image/png" href="icons/icon-192.png" />
 <style>html,body{margin:0;background:#0B130F;color:#EAF2EC;font-family:system-ui,sans-serif;-webkit-tap-highlight-color:transparent;overscroll-behavior:none;}#boot{display:flex;min-height:100vh;align-items:center;justify-content:center;letter-spacing:.18em;color:#8AA597;font-weight:800;}</style>
 </head><body><div id="root"><div id="boot">FACEOFF…</div></div>
-<script>window.__BUILD__="1793373080876";window.__FACEOFF_AUTH__=true;</script>
+<script>window.__BUILD__="1793387923644";window.__FACEOFF_AUTH__=true;</script>
 <script>window.__startFaceoff=function(){
 "use strict";
 var React=window.React,ReactDOM=window.ReactDOM;
@@ -641,6 +641,51 @@ function RecoveryScreen({ token, onDone }) {
                 note && React.createElement("p", { className: "auth-note" }, note),
                 React.createElement("button", { className: "linkbtn", style: { marginTop: 10 }, onClick: () => onDone("") }, "Back to sign in")))));
 }
+function tempPassword() {
+    const w = ["Goal", "Cage", "Stick", "Field", "Clear", "Save", "Pass", "Scoop"];
+    return w[Math.floor(Math.random() * w.length)] + "-" + String(Math.floor(1000 + Math.random() * 9000));
+}
+function ChoosePasswordScreen({ profile, onDone, onSignOut }) {
+    const [pw, setPw] = useState(""), [pw2, setPw2] = useState(""), [note, setNote] = useState(""), [busy, setBusy] = useState(false);
+    async function save() {
+        if (pw.length < 6) {
+            setNote("Use at least 6 characters.");
+            return;
+        }
+        if (pw !== pw2) {
+            setNote("The two passwords don't match.");
+            return;
+        }
+        setBusy(true);
+        try {
+            const s = await authSession();
+            if (!s)
+                throw new Error("Your sign-in expired. Sign in again with the temporary password.");
+            await authSetPassword(s.access_token, pw);
+            await api("rpc/password_changed", { method: "POST", body: {} });
+            onDone();
+        }
+        catch (e) {
+            setNote(friendlyAuthError(e.message));
+            setBusy(false);
+        }
+    }
+    return (React.createElement(Shell, null,
+        React.createElement("section", { className: "setup" },
+            React.createElement("div", { className: "card auth-card" },
+                React.createElement("div", { className: "card-title" }, "Choose your password"),
+                React.createElement("p", { className: "legend", style: { marginTop: 0 } },
+                    "Welcome",
+                    profile && profile.display_name ? ", " + profile.display_name : "",
+                    ". You signed in with a temporary password; pick your own to finish setting up."),
+                React.createElement("label", { className: "fld-label" }, "New password"),
+                React.createElement("input", { className: "field", type: "password", value: pw, onChange: (e) => setPw(e.target.value), autoComplete: "new-password" }),
+                React.createElement("label", { className: "fld-label" }, "Type it again"),
+                React.createElement("input", { className: "field", type: "password", value: pw2, onChange: (e) => setPw2(e.target.value), autoComplete: "new-password", onKeyDown: (e) => e.key === "Enter" && save() }),
+                React.createElement("button", { className: "btn btn-primary btn-block", style: { marginTop: 14 }, disabled: busy, onClick: save }, busy ? "Saving…" : "Save and continue"),
+                note && React.createElement("p", { className: "auth-note" }, note),
+                React.createElement("button", { className: "linkbtn", style: { marginTop: 10 }, onClick: onSignOut }, "Sign out")))));
+}
 function PendingScreen({ profile, msg, onRefresh, onSignOut }) {
     const off = profile && profile.role === "disabled";
     return (React.createElement(Shell, null,
@@ -844,8 +889,67 @@ function FamilyView({ profile, onSignOut }) {
             React.createElement("div", { style: { padding: "4px 14px 30px" } },
                 React.createElement("button", { className: "btn btn-block", onClick: load }, "Refresh")))));
 }
-function AdminPanel({ roster, me, onClose }) {
+function AdminPanel({ roster, me, onClose, teamName }) {
     const [tab, setTab] = useState("users");
+    const [adding, setAdding] = useState(false);
+    const [nf, setNf] = useState({ name: "", email: "", role: "family", pids: [], pw: tempPassword() });
+    const [creating, setCreating] = useState(false);
+    const [created, setCreated] = useState(null); // { name, email, pw, role }
+    const appLink = (typeof location !== "undefined" ? location.origin + location.pathname : "");
+    const inviteText = (c) => `Hi ${c.name}, here is your login for the ${teamName || "team"} lacrosse stats app.\n\nLink: ${appLink}\nEmail: ${c.email}\nTemporary password: ${c.pw}\n\nThe first time you sign in it will ask you to choose your own password.`;
+    async function createPerson() {
+        const name = nf.name.trim(), email = nf.email.trim().toLowerCase();
+        if (!name || !email) {
+            setErr("Enter their name and email.");
+            return;
+        }
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+            setErr("That email doesn't look right.");
+            return;
+        }
+        if (nf.pw.length < 6) {
+            setErr("The temporary password needs at least 6 characters.");
+            return;
+        }
+        setCreating(true);
+        setErr("");
+        try {
+            // make sure the temporary-password column exists before creating anything
+            await api("profiles?select=must_change_password&limit=1");
+            // create the login (the new person's session is NOT kept on this phone)
+            const j = await authCall("signup", { email, password: nf.pw, data: { display_name: name } });
+            const uid = (j.user && j.user.id) || j.id;
+            if (!uid)
+                throw new Error("The login was created but its ID wasn't returned. Refresh the list and set their role there.");
+            await api(`profiles?id=eq.${uid}`, { method: "PATCH", prefer: "return=minimal",
+                body: { role: nf.role, player_ids: nf.role === "family" ? nf.pids : [], display_name: name, must_change_password: true } });
+            setCreated({ name, email, pw: nf.pw, role: nf.role });
+            setNf({ name: "", email: "", role: nf.role, pids: [], pw: tempPassword() });
+            setAdding(false);
+            await loadUsers();
+        }
+        catch (e) {
+            const m = String(e.message || "");
+            if (/must_change_password/.test(m))
+                setErr("One more database step is needed first: run the step 1b script in Supabase, then try again.");
+            else
+                setErr(friendlyAuthError(m) === "That email already has an account. Sign in instead." ? "That email already has a login. Find them in the list below and set their role there." : friendlyAuthError(m));
+        }
+        setCreating(false);
+    }
+    async function copyInvite() { try {
+        await navigator.clipboard.writeText(inviteText(created));
+        setErr("");
+        setCopied(true);
+    }
+    catch (e) {
+        setErr("Couldn't copy; select the text and copy it.");
+    } }
+    async function shareInvite() { try {
+        await navigator.share({ text: inviteText(created) });
+    }
+    catch (e) { } }
+    const [copied, setCopied] = useState(false);
     const [users, setUsers] = useState(null);
     const [edits, setEdits] = useState({});
     const [err, setErr] = useState("");
@@ -905,6 +1009,38 @@ function AdminPanel({ roster, me, onClose }) {
                 React.createElement("button", { className: `seg-btn ${tab === "log" ? "seg-on" : ""}`, onClick: () => setTab("log") }, "Change log")),
             err && React.createElement("p", { className: "auth-note" }, err),
             tab === "users" && (React.createElement(React.Fragment, null,
+                created && (React.createElement("div", { className: "invite-box" },
+                    React.createElement("div", { className: "tpanel-h", style: { color: "var(--gold)" } },
+                        "Login created for ",
+                        created.name),
+                    React.createElement("pre", { className: "invite-text" }, inviteText(created)),
+                    React.createElement("div", { className: "modal-btns" },
+                        React.createElement("button", { className: "btn btn-primary", onClick: copyInvite }, copied ? "Copied" : "Copy message"),
+                        typeof navigator !== "undefined" && navigator.share && React.createElement("button", { className: "btn", onClick: shareInvite }, "Share\u2026"),
+                        React.createElement("button", { className: "btn", onClick: () => { setCreated(null); setCopied(false); } }, "Done")))),
+                !adding ? (React.createElement("button", { className: "btn btn-primary btn-block", style: { marginBottom: 12 }, onClick: () => { setAdding(true); setCreated(null); setCopied(false); setErr(""); } }, "\uFF0B Add a person")) : (React.createElement("div", { className: "tpanel", style: { borderRadius: 12, border: "1px solid var(--line)", marginBottom: 12 } },
+                    React.createElement("div", { className: "tpanel-h" }, "Add a person"),
+                    React.createElement("input", { className: "field", placeholder: "Name (e.g. Lisa Smith, Owen's mom)", value: nf.name, onChange: (e) => setNf({ ...nf, name: e.target.value }) }),
+                    React.createElement("input", { className: "field", style: { marginTop: 8 }, type: "email", placeholder: "Email", value: nf.email, autoCapitalize: "off", autoCorrect: "off", onChange: (e) => setNf({ ...nf, email: e.target.value }) }),
+                    React.createElement("div", { className: "fld-label", style: { marginTop: 8 } }, "Access"),
+                    React.createElement("div", { className: "chiprow" }, [["coach", "Coach"], ["assistant", "Assistant"], ["family", "Family"]].map(([k, lab]) => (React.createElement("button", { key: k, className: `tchip ${nf.role === k ? "tchip-on" : ""}`, onClick: () => setNf({ ...nf, role: k }) }, lab)))),
+                    nf.role === "family" && (React.createElement(React.Fragment, null,
+                        React.createElement("div", { className: "fld-label", style: { marginTop: 8 } }, "Their player(s)"),
+                        React.createElement("div", { className: "chiprow" }, roster.map((p) => {
+                            const on = nf.pids.includes(p.id);
+                            return React.createElement("button", { key: p.id, className: `tchip ${on ? "tchip-on" : ""}`, onClick: () => setNf({ ...nf, pids: on ? nf.pids.filter((x) => x !== p.id) : [...nf.pids, p.id] }) },
+                                "#",
+                                p.num,
+                                " ",
+                                p.name);
+                        })))),
+                    React.createElement("div", { className: "fld-label", style: { marginTop: 8 } }, "Temporary password"),
+                    React.createElement("div", { className: "addrow" },
+                        React.createElement("input", { className: "field", value: nf.pw, autoCapitalize: "off", autoCorrect: "off", onChange: (e) => setNf({ ...nf, pw: e.target.value }) }),
+                        React.createElement("button", { className: "btn btn-add", onClick: () => setNf({ ...nf, pw: tempPassword() }) }, "New")),
+                    React.createElement("div", { className: "modal-btns", style: { marginTop: 10 } },
+                        React.createElement("button", { className: "btn btn-primary", disabled: creating, onClick: createPerson }, creating ? "Creating…" : "Create login"),
+                        React.createElement("button", { className: "btn", onClick: () => { setAdding(false); setErr(""); } }, "Cancel")))),
                 React.createElement("p", { className: "legend", style: { marginTop: 0 } },
                     React.createElement("b", null, "Coach"),
                     ": everything \u00B7 ",
@@ -932,6 +1068,7 @@ function AdminPanel({ roster, me, onClose }) {
                                     " \u00B7 joined ",
                                     fmtDate(String(u.created_at || "").slice(0, 10)))),
                             React.createElement("span", { className: `role-pill role-${u.role}` }, ROLE_LABEL[u.role] || u.role)),
+                        u.must_change_password && React.createElement("p", { className: "legend", style: { margin: "4px 0 0" } }, "Hasn't signed in yet (still on the temporary password)"),
                         mine ? React.createElement("p", { className: "legend", style: { margin: "6px 0 0" } }, "You're the admin. (Your own role can't be changed here.)") : (React.createElement(React.Fragment, null,
                             React.createElement("div", { className: "chiprow", style: { marginTop: 8 } }, roles.map(([k, lab]) => React.createElement("button", { key: k, className: `tchip ${role === k ? "tchip-on" : ""}`, onClick: () => edit(u, "role", k) }, lab))),
                             role === "family" && (React.createElement(React.Fragment, null,
@@ -1035,7 +1172,7 @@ function AuthGate() {
             lsSet(PROFILE_KEY, p);
             setProfile(p);
             setMsg("");
-            setPhase(routeFor(p));
+            setPhase(p.must_change_password ? "setpw" : routeFor(p));
         }
         catch (e) {
             const cached = lsGet(PROFILE_KEY);
@@ -1061,6 +1198,8 @@ function AuthGate() {
         return React.createElement(RecoveryScreen, { token: recoveryToken, onDone: (m) => { setMsg(m); authSignOut(); setPhase("login"); } });
     if (phase === "pending")
         return React.createElement(PendingScreen, { profile: profile, msg: msg, onRefresh: boot, onSignOut: signOut });
+    if (phase === "setpw")
+        return React.createElement(ChoosePasswordScreen, { profile: profile, onDone: boot, onSignOut: signOut });
     if (phase === "family")
         return React.createElement(FamilyView, { profile: profile, onSignOut: signOut });
     return React.createElement(TrackerApp, { auth: { profile, role: profile.role, readOnly: profile.role === "assistant", isAdmin: profile.role === "admin", signOut } });
@@ -3293,7 +3432,9 @@ function TrackerApp({ auth }) {
                         React.createElement("b", null, "Assistant Coach"),
                         " sees everything but can't change it, and their screen refreshes every 20 seconds during a game. ",
                         React.createElement("b", null, "Family"),
-                        " sees only their own player's stats plus the team's results and schedule. The admin (Home \u2192 Admin) approves people, sets roles, links family accounts to their player, and reviews the ",
+                        " sees only their own player's stats plus the team's results and schedule. The admin (Home \u2192 Admin) can ",
+                        React.createElement("b", null, "Add a person"),
+                        " (name, email, access, and a temporary password, then send them the ready-made message), approves people who sign up on their own, sets roles, links family accounts to their player, and reviews the ",
                         React.createElement("b", null, "change log"),
                         " of every stat edit."),
                     React.createElement("div", { className: "help-h" }, "Backups & sync (Setup)"),
@@ -3676,7 +3817,7 @@ function TrackerApp({ auth }) {
                                 return; const f = confirmBox.onConfirm; setConfirmBox(null); setConfirmType(""); if (f)
                                 f(); } }, needType ? "Delete" : "Confirm")))));
         })(),
-        showAdmin && auth && auth.isAdmin && React.createElement(AdminPanel, { roster: roster, me: auth.profile.id, onClose: () => setShowAdmin(false) }),
+        showAdmin && auth && auth.isAdmin && React.createElement(AdminPanel, { roster: roster, me: auth.profile.id, teamName: settings.teamName, onClose: () => setShowAdmin(false) }),
         toastMsg && React.createElement("div", { className: "toast" }, toastMsg)));
 }
 /* ----------------------- printable report ----------------------- */
@@ -4997,6 +5138,8 @@ const CSS = `
 .admin-user { border-top:1px solid var(--line); padding:12px 2px; }
 .admin-new { background:rgba(255,138,148,.05); }
 .admin-top { display:flex; align-items:center; gap:10px; }
+.invite-box { border:1px solid var(--gold); border-radius:12px; padding:12px; margin-bottom:12px; background:rgba(255,194,71,.06); }
+.invite-text { white-space:pre-wrap; font-family:'Barlow', system-ui, sans-serif; font-size:13px; line-height:1.45; color:var(--text); margin:0 0 10px; }
 .audit-row { border-top:1px solid var(--line); padding:8px 2px; }
 .audit-when { font-size:11px; color:var(--dim); }
 .audit-what { font-size:13px; margin-top:2px; line-height:1.4; }
