@@ -7,7 +7,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" /><link rel="icon" type="image/png" href="icons/icon-192.png" />
 <style>html,body{margin:0;background:#0B130F;color:#EAF2EC;font-family:system-ui,sans-serif;-webkit-tap-highlight-color:transparent;overscroll-behavior:none;}#boot{display:flex;min-height:100vh;align-items:center;justify-content:center;letter-spacing:.18em;color:#8AA597;font-weight:800;}</style>
 </head><body><div id="root"><div id="boot">FACEOFF…</div></div>
-<script>window.__BUILD__="1791916883572";</script>
+<script>window.__BUILD__="1793372150374";</script>
 <script>window.__startFaceoff=function(){
 "use strict";
 var React=window.React,ReactDOM=window.ReactDOM;
@@ -538,6 +538,9 @@ function App() {
     const [strengthPrompt, setStrengthPrompt] = useState(null); // { entryId }
     const [showTeamEdit, setShowTeamEdit] = useState(false); // special-teams editor
     const [showReport, setShowReport] = useState(false); // printable report
+    const [reportMenu, setReportMenu] = useState(false); // choose: this view or pick games
+    const [reportPick, setReportPick] = useState(null); // { ids: [], breakdown: bool } game picker
+    const [customReport, setCustomReport] = useState(null); // { games, title, breakdown }
     const [showSelfCheck, setShowSelfCheck] = useState(false); // stat-engine self-check
     const [showHelp, setShowHelp] = useState(false); // in-app guide
     const [foPrompt, setFoPrompt] = useState(null); // face-off pop-up: { started }
@@ -2255,7 +2258,7 @@ function App() {
                 React.createElement("div", { className: "box-head" },
                     React.createElement("span", { className: "box-hint" }, "Tap a player for a game-by-game breakdown"),
                     React.createElement("button", { className: "btn btn-sm", onClick: () => setCardView({ mode: "all", playerId: (roster[0] || {}).id }) }, "Cards"),
-                    React.createElement("button", { className: "btn btn-sm", onClick: () => setShowReport(true) }, "Report"),
+                    React.createElement("button", { className: "btn btn-sm", onClick: () => setReportMenu(true) }, "Report"),
                     React.createElement("button", { className: "btn btn-sm btn-primary", onClick: () => setShowExport(true) }, "Export")),
                 React.createElement(StatsTable, { roster: roster, map: agg.map, onSelectPlayer: (id) => setStatPlayer(id) }),
                 React.createElement("p", { className: "legend" }, "G goals \u00B7 A assists \u00B7 P points \u00B7 SOG shots on goal (goals + saved) \u00B7 Miss off-target \u00B7 Sh% goals per shot \u00B7 SOG% on-goal per shot \u00B7 GB ground balls \u00B7 FW/FL faceoffs \u00B7 FO% faceoff win \u00B7 CT caused TO \u00B7 TO turnovers \u00B7 Pen penalties \u00B7 Sv saves \u00B7 GA goals against \u00B7 Sv% save \u00B7 TO turnovers \u00B7 DB drop balls"))))),
@@ -2777,6 +2780,80 @@ function App() {
                             React.createElement("button", { className: "step-btn", onClick: () => setTeamCounter(bucket, key, 1), "aria-label": "increase" }, "\uFF0B"))));
                 }),
                 React.createElement("p", { className: "legend", style: { marginTop: 10 } }, "EMO% = man-up goals \u00F7 man-up chances. PK% = (PK chances \u2212 PK goals against) \u00F7 PK chances.")))),
+        reportMenu && (React.createElement("div", { className: "overlay", onClick: () => setReportMenu(false) },
+            React.createElement("div", { className: "sheet", onClick: (e) => e.stopPropagation() },
+                React.createElement("div", { className: "sheet-head" },
+                    React.createElement("div", { className: "sheet-name" },
+                        React.createElement("div", { className: "sheet-pn" }, "PDF report"),
+                        React.createElement("div", { className: "sheet-pts" }, "What should it cover?")),
+                    React.createElement("button", { className: "sheet-done", onClick: () => setReportMenu(false) }, "Close")),
+                React.createElement("button", { className: "btn btn-block", disabled: !scopeGames.length, onClick: () => { setReportMenu(false); setShowReport(true); } },
+                    "This view: ",
+                    scopeTitle,
+                    " (",
+                    scopeGames.length,
+                    " game",
+                    scopeGames.length === 1 ? "" : "s",
+                    ")"),
+                React.createElement("button", { className: "btn btn-primary btn-block", style: { marginTop: 8 }, onClick: () => { setReportMenu(false); setReportPick({ ids: scopeGames.map((g) => g.id), breakdown: true }); } }, "Pick games\u2026"),
+                React.createElement("p", { className: "legend" }, "Pick any games from this season. The report shows their combined totals, then a full breakdown of each game.")))),
+        reportPick && (() => {
+            const list = [...games].sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+            const sel = new Set(reportPick.ids);
+            const toggle = (id) => { const n = new Set(sel); if (n.has(id))
+                n.delete(id);
+            else
+                n.add(id); setReportPick({ ...reportPick, ids: [...n] }); };
+            const chosen = list.filter((g) => sel.has(g.id));
+            return (React.createElement("div", { className: "overlay", onClick: () => setReportPick(null) },
+                React.createElement("div", { className: "sheet tall", onClick: (e) => e.stopPropagation() },
+                    React.createElement("div", { className: "sheet-head" },
+                        React.createElement("div", { className: "sheet-name" },
+                            React.createElement("div", { className: "sheet-pn" }, "Pick games"),
+                            React.createElement("div", { className: "sheet-pts" },
+                                chosen.length,
+                                " of ",
+                                list.length,
+                                " selected")),
+                        React.createElement("button", { className: "sheet-done", onClick: () => setReportPick(null) }, "Cancel")),
+                    React.createElement("div", { className: "pickbar" },
+                        React.createElement("button", { className: "tchip", onClick: () => setReportPick({ ...reportPick, ids: list.map((g) => g.id) }) }, "All"),
+                        React.createElement("button", { className: "tchip", onClick: () => setReportPick({ ...reportPick, ids: list.filter((g) => g.status === "final" && !g.scrimmage).map((g) => g.id) }) }, "Finals (no scrims)"),
+                        React.createElement("button", { className: "tchip", onClick: () => setReportPick({ ...reportPick, ids: [] }) }, "None")),
+                    list.length === 0 && React.createElement("p", { className: "legend" }, "No games in this season yet."),
+                    list.map((g) => {
+                        const res = g.scores.team > g.scores.opp ? "W" : g.scores.team < g.scores.opp ? "L" : "T";
+                        const tn = (tournaments.find((t) => t.id === g.tournamentId) || {}).name;
+                        return (React.createElement("label", { key: g.id, className: `gpick ${sel.has(g.id) ? "gpick-on" : ""}` },
+                            React.createElement("input", { type: "checkbox", checked: sel.has(g.id), onChange: () => toggle(g.id) }),
+                            React.createElement("span", { className: "ag-main" },
+                                React.createElement("span", { className: "ag-opp" },
+                                    "vs ",
+                                    g.oppName,
+                                    g.scrimmage ? React.createElement("span", { className: "gr-scrim" }, "SCRIM") : null),
+                                React.createElement("span", { className: "ag-meta" }, [fmtDate(g.date), tn, g.status === "final" ? "Final" : "In progress"].filter(Boolean).join(" · "))),
+                            React.createElement("span", { className: `ag-score ag-${res}` },
+                                res,
+                                " ",
+                                g.scores.team,
+                                "\u2013",
+                                g.scores.opp)));
+                    }),
+                    React.createElement("label", { className: "row-toggle", style: { marginTop: 12 } },
+                        React.createElement("span", null, "Full breakdown of each game (box score, scoring by period, team stats)"),
+                        React.createElement("input", { type: "checkbox", checked: reportPick.breakdown, onChange: (e) => setReportPick({ ...reportPick, breakdown: e.target.checked }) })),
+                    React.createElement("button", { className: "btn btn-primary btn-block", style: { marginTop: 10 }, disabled: !chosen.length, onClick: () => {
+                            const ordered = [...chosen].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+                            setCustomReport({ games: ordered, title: `Selected games (${ordered.length})`, breakdown: reportPick.breakdown });
+                            setReportPick(null);
+                        } },
+                        "Make report (",
+                        chosen.length,
+                        " game",
+                        chosen.length === 1 ? "" : "s",
+                        ")"))));
+        })(),
+        customReport && (React.createElement(ReportView, { teamName: settings.teamName, scope: "selected", scopeTitle: `${customReport.title}${activeSeason ? " · " + activeSeason.name : ""}`, scopeGames: customReport.games, roster: roster, tournaments: tournaments, games: games, breakdown: customReport.breakdown, onClose: () => setCustomReport(null) })),
         showReport && (React.createElement(ReportView, { teamName: settings.teamName, scope: scope, scopeTitle: scopeTitle, scopeGames: scopeGames, roster: roster, tournaments: tournaments, games: games, onClose: () => setShowReport(false) })),
         showSelfCheck && (() => {
             const suites = runSelfCheck();
@@ -2822,7 +2899,7 @@ function App() {
         toastMsg && React.createElement("div", { className: "toast" }, toastMsg)));
 }
 /* ----------------------- printable report ----------------------- */
-function ReportView({ teamName, scope, scopeTitle, scopeGames, roster, tournaments, games, onClose }) {
+function ReportView({ teamName, scope, scopeTitle, scopeGames, roster, tournaments, games, onClose, breakdown }) {
     const agg = aggregate(roster, scopeGames);
     const rec = recordFor(scopeGames);
     const t = aggregateTeam(scopeGames);
@@ -2963,6 +3040,7 @@ function ReportView({ teamName, scope, scopeTitle, scopeGames, roster, tournamen
                     React.createElement("thead", null,
                         React.createElement("tr", null,
                             React.createElement("th", null, "Opponent"),
+                            React.createElement("th", null, "Date"),
                             React.createElement("th", null, "Res"),
                             React.createElement("th", null, "GF"),
                             React.createElement("th", null, "GA"),
@@ -2978,7 +3056,10 @@ function ReportView({ teamName, scope, scopeTitle, scopeGames, roster, tournamen
                         const s = gt(g), sog = s.g + s.sog, sh = sog + s.ms;
                         const res = g.scores.team > g.scores.opp ? "W" : g.scores.team < g.scores.opp ? "L" : "T";
                         return (React.createElement("tr", { key: g.id },
-                            React.createElement("td", null, g.oppName),
+                            React.createElement("td", null,
+                                g.oppName,
+                                g.scrimmage ? " (scrim)" : ""),
+                            React.createElement("td", null, fmtDate(g.date)),
                             React.createElement("td", null, res),
                             React.createElement("td", null, g.scores.team),
                             React.createElement("td", null, g.scores.opp),
@@ -3073,6 +3154,163 @@ function ReportView({ teamName, scope, scopeTitle, scopeGames, roster, tournamen
                         " save% \u00B7 ",
                         st.ga,
                         " goals against")));
+            }),
+            breakdown && scopeGames.map((g) => {
+                const s = gt(g), sog = s.g + s.sog, sh = sog + s.ms;
+                const ts = g.teamStats || {}, os = g.oppStats || {};
+                const res = g.scores.team > g.scores.opp ? "W" : g.scores.team < g.scores.opp ? "L" : "T";
+                const tn = (tournaments.find((x) => x.id === g.tournamentId) || {}).name;
+                const played = roster.filter((p) => { const st = (g.stats || {})[p.id]; return st && STATS.some((k) => (st[k.key] || 0) > 0); });
+                const per = {};
+                let maxP = 0;
+                (g.log || []).forEach((e) => {
+                    const pd = e.period || 1;
+                    if (!per[pd])
+                        per[pd] = { gf: 0, ga: 0 };
+                    if (e.oppGoal)
+                        per[pd].ga += 1;
+                    else if (e.side === "team" && e.statKey === "g")
+                        per[pd].gf += 1;
+                    if (pd > maxP)
+                        maxP = pd;
+                });
+                const halves = g.rules && g.rules.periodType === "halves";
+                const baseN = halves ? 2 : 4;
+                const plabs = [];
+                for (let i = 1; i <= Math.max(maxP, baseN); i++)
+                    plabs.push([i, i > baseN ? (i === baseN + 1 ? "OT" : "OT" + (i - baseN)) : (halves ? "H" : "Q") + i]);
+                const hasPer = Object.keys(per).length > 0 && plabs.some(([i]) => per[i] && (per[i].gf || per[i].ga));
+                const gk = roster.filter((p) => { const st = (g.stats || {})[p.id]; return st && ((st.sv || 0) + (st.ga || 0)) > 0; });
+                return (React.createElement("div", { className: "rpt-game", key: g.id },
+                    React.createElement("div", { className: "rpt-head" },
+                        React.createElement("div", { className: "rpt-team" },
+                            teamName,
+                            " ",
+                            g.scores.team,
+                            " \u2013 ",
+                            g.scores.opp,
+                            " ",
+                            g.oppName),
+                        React.createElement("div", { className: "rpt-sub" },
+                            res === "W" ? "Win" : res === "L" ? "Loss" : "Tie",
+                            " \u00B7 ",
+                            fmtDate(g.date),
+                            tn ? " · " + tn : "",
+                            g.scrimmage ? " · Scrimmage" : "",
+                            " \u00B7 ",
+                            g.status === "final" ? "Final" : "In progress")),
+                    React.createElement("div", { className: "rpt-grid" }, [["Shots on Goal", sog], ["Total Shots", sh], ["Shot Acc.", pct(sog, sh)], ["Ground Balls", s.gb],
+                        ["Face-Offs", `${s.fw}/${s.fw + s.fl}`], ["FO Win%", pct(s.fw, s.fw + s.fl)], ["Caused TOs", s.ct], ["Turnovers", s.to],
+                        ["Clears", `${ts.clr || 0}/${(ts.clr || 0) + (ts.fclr || 0)}`], ["Saves", s.sv], ["Save%", pct(s.sv, s.sv + s.ga)], ["Penalties", s.pen]].map(([k, v]) => (React.createElement("div", { className: "rpt-tile", key: k },
+                        React.createElement("div", { className: "v" }, v),
+                        React.createElement("div", { className: "k" }, k))))),
+                    React.createElement("div", { className: "rpt-note" },
+                        "Opponent: ",
+                        g.scores.opp,
+                        " G \u00B7 ",
+                        os.sog || 0,
+                        " SOG \u00B7 ",
+                        os.ms || 0,
+                        " miss \u00B7 ",
+                        os.gb || 0,
+                        " GB \u00B7 ",
+                        os.pen || 0,
+                        " pen \u00B7 clears ",
+                        os.clr || 0,
+                        "/",
+                        (os.clr || 0) + (os.fclr || 0),
+                        " ",
+                        "\u00B7 Man-up ",
+                        ts.mug || 0,
+                        "/",
+                        os.pen || 0),
+                    hasPer && (React.createElement(React.Fragment, null,
+                        React.createElement("div", { className: "rpt-sec-title" },
+                            "Scoring by ",
+                            halves ? "half" : "quarter"),
+                        React.createElement("table", { className: "rpt-table" },
+                            React.createElement("thead", null,
+                                React.createElement("tr", null,
+                                    React.createElement("th", null),
+                                    plabs.map(([i, l]) => React.createElement("th", { key: i }, l)),
+                                    React.createElement("th", null, "Total"))),
+                            React.createElement("tbody", null,
+                                React.createElement("tr", null,
+                                    React.createElement("td", null, teamName),
+                                    plabs.map(([i]) => React.createElement("td", { key: i }, (per[i] || {}).gf || 0)),
+                                    React.createElement("td", null, g.scores.team)),
+                                React.createElement("tr", null,
+                                    React.createElement("td", null, g.oppName),
+                                    plabs.map(([i]) => React.createElement("td", { key: i }, (per[i] || {}).ga || 0)),
+                                    React.createElement("td", null, g.scores.opp)))))),
+                    React.createElement("div", { className: "rpt-sec-title" }, "Box score"),
+                    played.length === 0 ? React.createElement("div", { className: "rpt-note" }, "No player stats recorded for this game.") : (React.createElement("table", { className: "rpt-table" },
+                        React.createElement("thead", null,
+                            React.createElement("tr", null,
+                                React.createElement("th", null, "#"),
+                                React.createElement("th", null, "Name"),
+                                React.createElement("th", null, "Pos"),
+                                React.createElement("th", null, "G"),
+                                React.createElement("th", null, "A"),
+                                React.createElement("th", null, "PTS"),
+                                React.createElement("th", null, "SOG"),
+                                React.createElement("th", null, "Sh"),
+                                React.createElement("th", null, "GB"),
+                                React.createElement("th", null, "FOW"),
+                                React.createElement("th", null, "FOL"),
+                                React.createElement("th", null, "CT"),
+                                React.createElement("th", null, "TO"),
+                                React.createElement("th", null, "Pen"))),
+                        React.createElement("tbody", null,
+                            played.map((p) => {
+                                const st = { ...emptyStats(), ...(g.stats[p.id] || {}) };
+                                return (React.createElement("tr", { key: p.id },
+                                    React.createElement("td", null, p.num),
+                                    React.createElement("td", null, p.name || "—"),
+                                    React.createElement("td", null, p.pos || ""),
+                                    React.createElement("td", null, st.g),
+                                    React.createElement("td", null, st.a),
+                                    React.createElement("td", null, st.g + st.a),
+                                    React.createElement("td", null, shotsOnGoal(st)),
+                                    React.createElement("td", null, shotsTotal(st)),
+                                    React.createElement("td", null, st.gb),
+                                    React.createElement("td", null, st.fw),
+                                    React.createElement("td", null, st.fl),
+                                    React.createElement("td", null, st.ct),
+                                    React.createElement("td", null, st.to),
+                                    React.createElement("td", null, st.pen)));
+                            }),
+                            React.createElement("tr", { className: "rpt-totalrow" },
+                                React.createElement("td", null),
+                                React.createElement("td", null, "Totals"),
+                                React.createElement("td", null),
+                                React.createElement("td", null, s.g),
+                                React.createElement("td", null, s.a),
+                                React.createElement("td", null, s.g + s.a),
+                                React.createElement("td", null, sog),
+                                React.createElement("td", null, sh),
+                                React.createElement("td", null, s.gb),
+                                React.createElement("td", null, s.fw),
+                                React.createElement("td", null, s.fl),
+                                React.createElement("td", null, s.ct),
+                                React.createElement("td", null, s.to),
+                                React.createElement("td", null, s.pen))))),
+                    gk.map((p) => {
+                        const st = g.stats[p.id];
+                        const f = (st.sv || 0) + (st.ga || 0);
+                        return (React.createElement("div", { className: "rpt-note", key: p.id },
+                            "Goalie #",
+                            p.num,
+                            " ",
+                            p.name || "",
+                            ": ",
+                            st.sv || 0,
+                            " saves \u00B7 ",
+                            st.ga || 0,
+                            " GA \u00B7 ",
+                            pct(st.sv || 0, f),
+                            " save%"));
+                    })));
             }),
             React.createElement("div", { className: "rpt-foot" },
                 teamName,
@@ -3972,6 +4210,11 @@ const CSS = `
 .home-ico { font-size:18px; line-height:1; margin-bottom:4px; }
 .home-t { font-family:'Barlow Condensed'; font-weight:800; font-size:18px; letter-spacing:.03em; }
 .home-s { font-family:'Barlow'; font-size:11.5px; color:var(--dim); line-height:1.3; }
+.pickbar { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+.gpick { display:flex; align-items:center; gap:10px; padding:10px 4px; border-top:1px solid var(--line); cursor:pointer; }
+.gpick input { width:20px; height:20px; flex:none; accent-color:var(--gold); }
+.gpick .ag-main { display:flex; flex-direction:column; }
+.gpick-on { background:rgba(255,194,71,.06); }
 .allgame { display:flex; align-items:center; gap:10px; padding:10px 4px; border-top:1px solid var(--line); }
 .card-title + .allgame { border-top:none; }
 .ag-main { flex:1; min-width:0; }
@@ -4178,13 +4421,18 @@ const CSS = `
 .row-toggle { display:flex; align-items:center; justify-content:space-between; font-size:14px; font-weight:600; padding:4px 2px; }
 .row-toggle input { width:20px; height:20px; accent-color:var(--gold); }
 
+.rpt-game { margin-top:28px; padding-top:18px; border-top:2px dashed #c9d0d8; }
 @media print {
+  html, body { background:#fff !important; }
+  .app { background:#fff !important; max-width:none !important; width:auto !important; padding:0 !important; margin:0 !important; min-height:0 !important; }
   .app > *:not(.report-overlay) { display:none !important; }
   .report-overlay { position:static; background:#fff; overflow:visible; }
   .report-bar { display:none !important; }
   .report { margin:0; max-width:none; box-shadow:none; padding:0; }
   .rpt-table { font-size:9.5px; }
   .no-print { display:none !important; }
+  .rpt-game { break-before:page; page-break-before:always; margin-top:0; padding-top:0; border-top:none; }
+  .rpt-table tr { break-inside:avoid; }
 }
 `;
 
