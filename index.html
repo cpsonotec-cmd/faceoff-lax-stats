@@ -7,7 +7,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" /><link rel="icon" type="image/png" href="icons/icon-192.png" />
 <style>html,body{margin:0;background:#0B130F;color:#EAF2EC;font-family:system-ui,sans-serif;-webkit-tap-highlight-color:transparent;overscroll-behavior:none;}#boot{display:flex;min-height:100vh;align-items:center;justify-content:center;letter-spacing:.18em;color:#8AA597;font-weight:800;}</style>
 </head><body><div id="root"><div id="boot">FACEOFF…</div></div>
-<script>window.__BUILD__="1793372150374";</script>
+<script>window.__BUILD__="1793373079610";window.__FACEOFF_AUTH__=false;</script>
 <script>window.__startFaceoff=function(){
 "use strict";
 var React=window.React,ReactDOM=window.ReactDOM;
@@ -340,15 +340,16 @@ catch (e) { } }
 // Cloud sync talks directly to Supabase's built-in REST API (PostgREST).
 // cfg.url = Supabase project URL, cfg.key = anon public key, cfg.team = team key.
 function cloudBase(cfg) { return (cfg.url || "").replace(/\/+$/, ""); }
-function cloudHeaders(cfg) {
-    return { "Content-Type": "application/json", apikey: cfg.key || "", Authorization: "Bearer " + (cfg.key || "") };
+function cloudHeaders(cfg, token) {
+    return { "Content-Type": "application/json", apikey: cfg.key || "", Authorization: "Bearer " + (token || cfg.key || "") };
 }
 async function cloudPush(cfg, state) {
     const url = `${cloudBase(cfg)}/rest/v1/app_state?on_conflict=team_key`;
     const body = [{ team_key: cfg.team, data: state, updated_at: new Date().toISOString() }];
+    const sess = AUTH_ON ? await authSession() : null;
     const res = await fetch(url, {
         method: "POST",
-        headers: { ...cloudHeaders(cfg), Prefer: "resolution=merge-duplicates,return=minimal" },
+        headers: { ...cloudHeaders(cfg, sess && sess.access_token), Prefer: "resolution=merge-duplicates,return=minimal" },
         body: JSON.stringify(body),
     });
     if (!res.ok)
@@ -357,13 +358,717 @@ async function cloudPush(cfg, state) {
 }
 async function cloudPull(cfg) {
     const url = `${cloudBase(cfg)}/rest/v1/app_state?team_key=eq.${encodeURIComponent(cfg.team)}&select=data,updated_at`;
-    const res = await fetch(url, { headers: cloudHeaders(cfg) });
+    const sess = AUTH_ON ? await authSession() : null;
+    const res = await fetch(url, { headers: cloudHeaders(cfg, sess && sess.access_token) });
     if (!res.ok)
         throw new Error("HTTP " + res.status);
     const rows = await res.json();
     if (!rows || !rows.length)
         return null;
     return { data: rows[0].data, updatedAt: rows[0].updated_at };
+}
+/* ------------------------- sign-in (Supabase Auth) ------------------------- */
+// Turned on per build (window.__FACEOFF_AUTH__). When off, the app works exactly as before.
+const AUTH_ON = typeof window !== "undefined" && !!window.__FACEOFF_AUTH__;
+const AUTH_KEY = "faceoff-auth";
+const PROFILE_KEY = "faceoff-profile";
+const FAMILY_CACHE = "faceoff-family";
+const ROLE_LABEL = { admin: "Admin", coach: "Coach", assistant: "Assistant Coach", family: "Family", pending: "Waiting for approval", disabled: "No access" };
+function lsGet(k) { try {
+    return JSON.parse(localStorage.getItem(k) || "null");
+}
+catch (e) {
+    return null;
+} }
+function lsSet(k, v) { try {
+    if (v == null)
+        localStorage.removeItem(k);
+    else
+        localStorage.setItem(k, JSON.stringify(v));
+}
+catch (e) { } }
+function sessFrom(j, prevUser) {
+    return {
+        access_token: j.access_token, refresh_token: j.refresh_token,
+        expires_at: j.expires_at || Math.floor(Date.now() / 1000) + (j.expires_in || 3600),
+        user: j.user ? { id: j.user.id, email: j.user.email } : prevUser || null,
+    };
+}
+async function authCall(path, body, opts = {}) {
+    const cfg = getCloudCfg();
+    const res = await fetch(`${cloudBase(cfg)}/auth/v1/${path}`, {
+        method: opts.method || "POST",
+        headers: { "Content-Type": "application/json", apikey: cfg.key, ...(opts.token ? { Authorization: "Bearer " + opts.token } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+    });
+    const txt = await res.text();
+    let j = {};
+    try {
+        j = txt ? JSON.parse(txt) : {};
+    }
+    catch (e) { }
+    if (!res.ok) {
+        const err = new Error(j.error_description || j.msg || j.message || j.error || "HTTP " + res.status);
+        err.status = res.status;
+        throw err;
+    }
+    return j;
+}
+async function authSignIn(email, password) {
+    const s = sessFrom(await authCall("token?grant_type=password", { email, password }));
+    lsSet(AUTH_KEY, s);
+    return s;
+}
+async function authSignUp(email, password, name) {
+    const j = await authCall("signup", { email, password, data: { display_name: name } });
+    if (j.access_token) {
+        const s = sessFrom(j);
+        lsSet(AUTH_KEY, s);
+        return s;
+    }
+    return null; // Supabase is set to require email confirmation
+}
+let authRefreshing = null;
+async function authSession() {
+    const s = lsGet(AUTH_KEY);
+    if (!s || !s.refresh_token)
+        return null;
+    if (s.expires_at - 60 > Date.now() / 1000)
+        return s;
+    if (!authRefreshing) {
+        authRefreshing = (async () => {
+            try {
+                const n = sessFrom(await authCall("token?grant_type=refresh_token", { refresh_token: s.refresh_token }), s.user);
+                lsSet(AUTH_KEY, n);
+                return n;
+            }
+            catch (e) {
+                if (e.status && e.status >= 400 && e.status < 500) {
+                    lsSet(AUTH_KEY, null);
+                    return null;
+                } // session revoked
+                return s; // offline: keep it and retry later
+            }
+            finally {
+                setTimeout(() => { authRefreshing = null; }, 0);
+            }
+        })();
+    }
+    return authRefreshing;
+}
+async function authSignOut() {
+    const s = lsGet(AUTH_KEY);
+    lsSet(AUTH_KEY, null);
+    lsSet(PROFILE_KEY, null);
+    lsSet(FAMILY_CACHE, null);
+    try {
+        localStorage.removeItem("fo_" + STORAGE_KEY);
+    }
+    catch (e) { } // don't leave team data on a shared phone
+    if (s && s.access_token) {
+        try {
+            await authCall("logout", {}, { token: s.access_token });
+        }
+        catch (e) { }
+    }
+}
+async function authReset(email) {
+    await authCall("recover?redirect_to=" + encodeURIComponent(location.origin + location.pathname), { email });
+}
+async function authSetPassword(token, password) { await authCall("user", { password }, { method: "PUT", token }); }
+// signed-in call to the database REST API
+async function api(path, opts = {}) {
+    const s = await authSession();
+    const cfg = getCloudCfg();
+    const res = await fetch(`${cloudBase(cfg)}/rest/v1/${path}`, {
+        method: opts.method || "GET",
+        headers: { ...cloudHeaders(cfg, s && s.access_token), ...(opts.prefer ? { Prefer: opts.prefer } : {}) },
+        body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    });
+    const txt = await res.text();
+    if (!res.ok) {
+        let m = txt;
+        try {
+            const j = JSON.parse(txt);
+            m = j.message || j.hint || txt;
+        }
+        catch (e) { }
+        throw new Error(m || "HTTP " + res.status);
+    }
+    return txt ? JSON.parse(txt) : null;
+}
+function friendlyAuthError(m) {
+    const t = String(m || "");
+    if (/invalid login|invalid grant|credentials/i.test(t))
+        return "Wrong email or password.";
+    if (/not confirmed/i.test(t))
+        return "Please confirm your email first (check your inbox), then sign in.";
+    if (/already registered|already exists/i.test(t))
+        return "That email already has an account. Sign in instead.";
+    if (/failed to fetch|network|load failed/i.test(t))
+        return "No connection. Try again when you have signal.";
+    if (/password/i.test(t) && /6|short|weak/i.test(t))
+        return "Password is too short. Use at least 6 characters.";
+    if (/rate|too many/i.test(t))
+        return "Too many tries. Wait a minute and try again.";
+    return t;
+}
+const AUDIT_FIELD = {
+    "score.team": "Our score", "score.opp": "Opponent score", status: "Game status",
+    "team.clr": "Clears", "team.fclr": "Failed clears", "team.mug": "Man-up goals", "team.shg": "Short-handed goals", "team.pkOpp": "Penalty-kill chances",
+    "opp.sog": "Opponent SOG", "opp.ms": "Opponent misses", "opp.gb": "Opponent GB", "opp.pen": "Opponent penalties",
+    "opp.clr": "Opponent clears", "opp.fclr": "Opponent failed clears", "opp.mug": "Opponent man-up goals", "opp.shg": "Opponent SH goals",
+};
+const auditLabel = (f) => AUDIT_FIELD[f] || (STAT_BY_KEY[f] && STAT_BY_KEY[f].label) || f;
+function Shell({ children }) {
+    return (React.createElement("div", { className: "app" },
+        React.createElement("style", null, CSS),
+        React.createElement("header", { className: "topbar" },
+            React.createElement("div", { className: "brand" },
+                React.createElement("span", { className: "brand-x" }, "\u2715"),
+                "FACEOFF",
+                React.createElement("span", { className: "brand-sub" }, "Lax Stats")),
+            React.createElement("div", { className: "brand-sub" }, "Boys lacrosse \u00B7 season tracker")),
+        children));
+}
+function LoginScreen({ onDone, msg }) {
+    const [mode, setMode] = useState("in"); // in | up | forgot
+    const [name, setName] = useState("");
+    const [email, setEmail] = useState("");
+    const [pw, setPw] = useState("");
+    const [busy, setBusy] = useState(false);
+    const [note, setNote] = useState(msg || "");
+    async function go() {
+        const e = email.trim().toLowerCase();
+        if (!e) {
+            setNote("Enter your email.");
+            return;
+        }
+        setBusy(true);
+        setNote("");
+        try {
+            if (mode === "forgot") {
+                await authReset(e);
+                setNote("If that email has an account, a link to set a new password is on its way.");
+                setMode("in");
+            }
+            else if (mode === "up") {
+                if (!name.trim()) {
+                    setNote("Enter your name so the coach knows who you are.");
+                    setBusy(false);
+                    return;
+                }
+                if (pw.length < 6) {
+                    setNote("Use at least 6 characters for the password.");
+                    setBusy(false);
+                    return;
+                }
+                const s = await authSignUp(e, pw, name.trim());
+                if (s) {
+                    onDone();
+                    return;
+                }
+                setNote("Account created. Check your email to confirm it, then sign in.");
+                setMode("in");
+            }
+            else {
+                if (!pw) {
+                    setNote("Enter your password.");
+                    setBusy(false);
+                    return;
+                }
+                await authSignIn(e, pw);
+                onDone();
+                return;
+            }
+        }
+        catch (err) {
+            setNote(friendlyAuthError(err.message));
+        }
+        setBusy(false);
+    }
+    return (React.createElement(Shell, null,
+        React.createElement("section", { className: "setup" },
+            React.createElement("div", { className: "card auth-card" },
+                React.createElement("div", { className: "seg auth-seg" },
+                    React.createElement("button", { className: `seg-btn ${mode === "in" ? "seg-on" : ""}`, onClick: () => { setMode("in"); setNote(""); } }, "Sign in"),
+                    React.createElement("button", { className: `seg-btn ${mode === "up" ? "seg-on" : ""}`, onClick: () => { setMode("up"); setNote(""); } }, "Create account")),
+                mode === "forgot" && React.createElement("p", { className: "legend" }, "Enter your email and we'll send a link to set a new password."),
+                mode === "up" && (React.createElement(React.Fragment, null,
+                    React.createElement("label", { className: "fld-label" }, "Your name"),
+                    React.createElement("input", { className: "field", value: name, onChange: (e) => setName(e.target.value), placeholder: "First and last name", autoComplete: "name" }))),
+                React.createElement("label", { className: "fld-label" }, "Email"),
+                React.createElement("input", { className: "field", type: "email", value: email, onChange: (e) => setEmail(e.target.value), placeholder: "you@example.com", autoComplete: "username", autoCapitalize: "off", autoCorrect: "off", inputMode: "email" }),
+                mode !== "forgot" && (React.createElement(React.Fragment, null,
+                    React.createElement("label", { className: "fld-label" }, "Password"),
+                    React.createElement("input", { className: "field", type: "password", value: pw, onChange: (e) => setPw(e.target.value), autoComplete: mode === "up" ? "new-password" : "current-password", onKeyDown: (e) => e.key === "Enter" && go() }))),
+                React.createElement("button", { className: "btn btn-primary btn-block", style: { marginTop: 14 }, disabled: busy, onClick: go }, busy ? "One moment…" : mode === "up" ? "Create account" : mode === "forgot" ? "Send reset link" : "Sign in"),
+                note && React.createElement("p", { className: "auth-note" }, note),
+                mode === "in" && React.createElement("button", { className: "linkbtn", style: { marginTop: 10 }, onClick: () => { setMode("forgot"); setNote(""); } }, "Forgot password?"),
+                mode === "forgot" && React.createElement("button", { className: "linkbtn", style: { marginTop: 10 }, onClick: () => setMode("in") }, "Back to sign in"),
+                mode === "up" && React.createElement("p", { className: "legend" }, "After you sign up, the team admin approves your account and sets what you can see.")))));
+}
+function RecoveryScreen({ token, onDone }) {
+    const [pw, setPw] = useState(""), [pw2, setPw2] = useState(""), [note, setNote] = useState(""), [busy, setBusy] = useState(false);
+    async function save() {
+        if (pw.length < 6) {
+            setNote("Use at least 6 characters.");
+            return;
+        }
+        if (pw !== pw2) {
+            setNote("The two passwords don't match.");
+            return;
+        }
+        setBusy(true);
+        try {
+            await authSetPassword(token, pw);
+            onDone("Password updated. Sign in with your new password.");
+        }
+        catch (e) {
+            setNote(friendlyAuthError(e.message) + " The link may have expired; request a new one.");
+            setBusy(false);
+        }
+    }
+    return (React.createElement(Shell, null,
+        React.createElement("section", { className: "setup" },
+            React.createElement("div", { className: "card auth-card" },
+                React.createElement("div", { className: "card-title" }, "Set a new password"),
+                React.createElement("label", { className: "fld-label" }, "New password"),
+                React.createElement("input", { className: "field", type: "password", value: pw, onChange: (e) => setPw(e.target.value), autoComplete: "new-password" }),
+                React.createElement("label", { className: "fld-label" }, "Type it again"),
+                React.createElement("input", { className: "field", type: "password", value: pw2, onChange: (e) => setPw2(e.target.value), autoComplete: "new-password" }),
+                React.createElement("button", { className: "btn btn-primary btn-block", style: { marginTop: 14 }, disabled: busy, onClick: save }, "Save password"),
+                note && React.createElement("p", { className: "auth-note" }, note),
+                React.createElement("button", { className: "linkbtn", style: { marginTop: 10 }, onClick: () => onDone("") }, "Back to sign in")))));
+}
+function PendingScreen({ profile, msg, onRefresh, onSignOut }) {
+    const off = profile && profile.role === "disabled";
+    return (React.createElement(Shell, null,
+        React.createElement("section", { className: "setup" },
+            React.createElement("div", { className: "card auth-card" },
+                React.createElement("div", { className: "card-title" }, off ? "Access turned off" : "Almost there"),
+                React.createElement("p", { className: "legend", style: { marginTop: 0 } }, off
+                    ? "Your access to the team's stats has been turned off. Contact the coach if this is a mistake."
+                    : `Thanks${profile && profile.display_name ? ", " + profile.display_name : ""}. Your account is set up. The team admin needs to approve it and choose what you can see. Check back soon.`),
+                msg && React.createElement("p", { className: "auth-note" }, msg),
+                React.createElement("div", { className: "modal-btns", style: { marginTop: 10 } },
+                    React.createElement("button", { className: "btn btn-primary", onClick: onRefresh }, "Check again"),
+                    React.createElement("button", { className: "btn", onClick: onSignOut }, "Sign out"))))));
+}
+// "2G 1A · 3 GB · FO 9/13" style summary of one player's line
+function statLine(st) {
+    const s = { ...emptyStats(), ...(st || {}) };
+    const parts = [];
+    if (s.g || s.a)
+        parts.push(`${s.g}G ${s.a}A`);
+    const sh = shotsTotal(s);
+    if (sh)
+        parts.push(`${shotsOnGoal(s)}/${sh} on goal`);
+    if (s.gb)
+        parts.push(`${s.gb} GB`);
+    if (s.fw + s.fl)
+        parts.push(`FO ${s.fw}/${s.fw + s.fl}`);
+    if (s.ct)
+        parts.push(`${s.ct} CT`);
+    if (s.to)
+        parts.push(`${s.to} TO`);
+    if (s.sv + s.ga)
+        parts.push(`${s.sv} saves, ${s.ga} GA`);
+    if (s.pen)
+        parts.push(`${s.pen} pen`);
+    return parts.join(" · ") || "No stats";
+}
+function FamilyView({ profile, onSignOut }) {
+    const [data, setData] = useState(() => lsGet(FAMILY_CACHE));
+    const [err, setErr] = useState("");
+    const [seasonId, setSeasonId] = useState(null);
+    const [open, setOpen] = useState(null);
+    async function load() {
+        try {
+            const d = await api("rpc/family_view", { method: "POST", body: {} });
+            if (d) {
+                setData(d);
+                lsSet(FAMILY_CACHE, d);
+            }
+            setErr("");
+        }
+        catch (e) {
+            setErr("Couldn't refresh: " + e.message);
+        }
+    }
+    useEffect(() => { load(); const i = setInterval(load, 30000); return () => clearInterval(i); }, []);
+    if (!data) {
+        return (React.createElement(Shell, null,
+            React.createElement("div", { className: "empty" },
+                React.createElement("div", { className: "empty-title" }, err ? "Can't load stats yet" : "Loading team stats…"),
+                err && React.createElement("p", { className: "empty-body" }, err),
+                React.createElement("div", { className: "empty-actions" },
+                    React.createElement("button", { className: "btn", onClick: load }, "Try again"),
+                    React.createElement("button", { className: "btn", onClick: onSignOut }, "Sign out")))));
+    }
+    const settings = data.settings || {};
+    const color = settings.teamColor || "#FF7A45";
+    const seasons = data.seasons || [];
+    const sid = seasonId || data.activeSeasonId || (seasons[seasons.length - 1] || {}).id;
+    const season = seasons.find((x) => x.id === sid);
+    const games = (data.games || []).filter((g) => !sid || !g.seasonId || g.seasonId === sid)
+        .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+    const players = data.roster || [];
+    const rec = recordFor(games.filter((g) => g.status === "final" && !g.scrimmage));
+    const tours = (data.tournaments || []).filter((t) => !sid || !t.seasonId || t.seasonId === sid);
+    const upNext = [];
+    tours.forEach((t) => (t.schedule || []).forEach((sl) => { if (!sl.gameId || !games.some((g) => g.id === sl.gameId))
+        upNext.push({ t, sl }); }));
+    upNext.sort((a, b) => slotKey(a.sl).localeCompare(slotKey(b.sl)));
+    const total = (pid) => games.reduce((acc, g) => { const st = (g.stats || {})[pid] || {}; STATS.forEach((k) => { acc[k.key] += st[k.key] || 0; }); return acc; }, emptyStats());
+    return (React.createElement(Shell, null,
+        React.createElement("section", { className: "setup" },
+            React.createElement("div", { className: "home-hero", style: { borderColor: color } },
+                React.createElement("div", { className: "home-hero-top" },
+                    React.createElement("div", { className: "home-team", style: { color } }, settings.teamName || "Team"),
+                    React.createElement("button", { className: "gh-act", onClick: onSignOut }, "Sign out")),
+                React.createElement("div", { className: "home-season" }, season ? season.name : "Season"),
+                React.createElement("div", { className: "home-rec" },
+                    rec.w,
+                    "-",
+                    rec.l,
+                    rec.t ? "-" + rec.t : "",
+                    " ",
+                    React.createElement("span", null,
+                        games.length,
+                        " game",
+                        games.length === 1 ? "" : "s",
+                        " \u00B7 Family view")),
+                seasons.length > 1 && (React.createElement("div", { className: "chiprow", style: { marginTop: 10 } }, seasons.map((x) => React.createElement("button", { key: x.id, className: `tchip ${x.id === sid ? "tchip-on" : ""}`, onClick: () => setSeasonId(x.id) }, x.name))))),
+            players.length === 0 && (React.createElement("div", { className: "card" },
+                React.createElement("p", { className: "legend", style: { margin: 0 } }, "Your account isn't linked to a player yet. Ask the coach to link it, then pull down to refresh."))),
+            players.map((p) => {
+                const t = total(p.id);
+                const sog = shotsOnGoal(t), sh = shotsTotal(t);
+                const tiles = p.pos === "G"
+                    ? [["Saves", t.sv], ["Goals against", t.ga], ["Save %", pct(t.sv, t.sv + t.ga)], ["GB", t.gb]]
+                    : [["Goals", t.g], ["Assists", t.a], ["Points", t.g + t.a], ["Shots on goal", `${sog}/${sh}`], ["Ground balls", t.gb], ["Face-offs", `${t.fw}/${t.fw + t.fl}`], ["Caused TOs", t.ct], ["Turnovers", t.to]];
+                return (React.createElement("div", { className: "card", key: p.id },
+                    React.createElement("div", { className: "card-title" },
+                        "#",
+                        p.num,
+                        " ",
+                        p.name,
+                        " ",
+                        React.createElement("span", { className: "count-pill" }, posLabel(p.pos) || "Player")),
+                    React.createElement("div", { className: "fam-tiles" }, tiles.map(([k, v]) => React.createElement("div", { className: "rec-tile", key: k },
+                        React.createElement("div", { className: "rec-v" }, v),
+                        React.createElement("div", { className: "rec-k" }, k))))));
+            }),
+            upNext.length > 0 && (React.createElement("div", { className: "card" },
+                React.createElement("div", { className: "card-title" }, "Up next"),
+                upNext.slice(0, 5).map(({ t, sl }) => (React.createElement("div", { key: sl.id, className: "allgame" },
+                    React.createElement("div", { className: "ag-main" },
+                        React.createElement("div", { className: "ag-opp" },
+                            "vs ",
+                            sl.opp),
+                        React.createElement("div", { className: "ag-meta" },
+                            fmtSlot(sl),
+                            " \u00B7 ",
+                            t.name))))))),
+            React.createElement("div", { className: "card" },
+                React.createElement("div", { className: "card-title" },
+                    "Games ",
+                    React.createElement("span", { className: "count-pill" }, games.length)),
+                games.length === 0 && React.createElement("p", { className: "legend", style: { marginTop: 0 } }, "No games yet this season."),
+                games.map((g) => {
+                    const res = g.scores.team > g.scores.opp ? "W" : g.scores.team < g.scores.opp ? "L" : "T";
+                    const tn = (tours.find((t) => t.id === g.tournamentId) || {}).name;
+                    const tt = { ...emptyStats(), ...(g.teamTotals || {}) };
+                    const isOpen = open === g.id;
+                    const per = {};
+                    (g.log || []).forEach((e) => { const pd = e.period || 1; per[pd] = per[pd] || { gf: 0, ga: 0 }; if (e.oppGoal)
+                        per[pd].ga += 1;
+                    else if (e.statKey === "g")
+                        per[pd].gf += 1; });
+                    const pds = Object.keys(per).map(Number).sort((a, b) => a - b);
+                    const halves = g.rules && g.rules.periodType === "halves";
+                    const base = halves ? 2 : 4;
+                    const plab = (i) => (i > base ? "OT" : (halves ? "H" : "Q") + i);
+                    return (React.createElement("div", { key: g.id, className: "fam-game" },
+                        React.createElement("button", { className: "fam-game-row", onClick: () => setOpen(isOpen ? null : g.id) },
+                            React.createElement("span", { className: "ag-main" },
+                                React.createElement("span", { className: "ag-opp" },
+                                    "vs ",
+                                    g.oppName,
+                                    g.scrimmage ? React.createElement("span", { className: "gr-scrim" }, "SCRIM") : null),
+                                React.createElement("span", { className: "ag-meta" }, [fmtDate(g.date), tn, g.status === "final" ? "Final" : "In progress"].filter(Boolean).join(" · "))),
+                            React.createElement("span", { className: `ag-score ag-${res}` },
+                                res,
+                                " ",
+                                g.scores.team,
+                                "\u2013",
+                                g.scores.opp)),
+                        players.map((p) => React.createElement("div", { key: p.id, className: "fam-line" },
+                            React.createElement("b", null,
+                                "#",
+                                p.num,
+                                " ",
+                                p.name,
+                                ":"),
+                            " ",
+                            statLine((g.stats || {})[p.id]))),
+                        isOpen && (React.createElement("div", { className: "fam-detail" },
+                            React.createElement("div", null,
+                                React.createElement("b", null, "Team:"),
+                                " ",
+                                tt.g,
+                                " G \u00B7 ",
+                                tt.a,
+                                " A \u00B7 ",
+                                tt.g + tt.sog,
+                                "/",
+                                tt.g + tt.sog + tt.ms,
+                                " shots on goal \u00B7 ",
+                                tt.gb,
+                                " GB \u00B7 FO ",
+                                tt.fw,
+                                "/",
+                                tt.fw + tt.fl,
+                                " \u00B7 ",
+                                tt.ct,
+                                " CT \u00B7 ",
+                                tt.sv,
+                                " saves"),
+                            pds.length > 0 && React.createElement("div", null,
+                                React.createElement("b", null, "By period:"),
+                                " ",
+                                pds.map((i) => `${plab(i)} ${per[i].gf}-${per[i].ga}`).join(" · "))))));
+                })),
+            err && React.createElement("p", { className: "legend", style: { padding: "0 16px" } }, err),
+            React.createElement("div", { style: { padding: "4px 14px 30px" } },
+                React.createElement("button", { className: "btn btn-block", onClick: load }, "Refresh")))));
+}
+function AdminPanel({ roster, me, onClose }) {
+    const [tab, setTab] = useState("users");
+    const [users, setUsers] = useState(null);
+    const [edits, setEdits] = useState({});
+    const [err, setErr] = useState("");
+    const [log, setLog] = useState(null);
+    const [who, setWho] = useState("");
+    const [hideMine, setHideMine] = useState(true);
+    async function loadUsers() { try {
+        setUsers(await api("profiles?select=*&order=created_at.asc"));
+        setErr("");
+    }
+    catch (e) {
+        setErr(e.message);
+    } }
+    async function loadLog() { try {
+        setLog(await api("audit_log?select=*&order=at.desc&limit=500"));
+        setErr("");
+    }
+    catch (e) {
+        setErr(e.message);
+    } }
+    useEffect(() => { loadUsers(); }, []);
+    useEffect(() => { if (tab === "log" && !log)
+        loadLog(); }, [tab]);
+    const val = (u, k) => (edits[u.id] && edits[u.id][k] !== undefined ? edits[u.id][k] : u[k]);
+    const edit = (u, k, v) => setEdits({ ...edits, [u.id]: { ...(edits[u.id] || {}), [k]: v } });
+    async function save(u) {
+        const e = edits[u.id];
+        if (!e)
+            return;
+        try {
+            await api(`profiles?id=eq.${u.id}`, { method: "PATCH", prefer: "return=minimal",
+                body: { role: val(u, "role"), player_ids: val(u, "player_ids") || [], display_name: val(u, "display_name") } });
+            const n = { ...edits };
+            delete n[u.id];
+            setEdits(n);
+            await loadUsers();
+        }
+        catch (x) {
+            setErr(x.message);
+        }
+    }
+    const roles = [["coach", "Coach"], ["assistant", "Assistant"], ["family", "Family"], ["pending", "Pending"], ["disabled", "No access"], ["admin", "Admin"]];
+    const pending = (users || []).filter((u) => u.role === "pending").length;
+    const rows = (log || []).filter((r) => (!who || r.user_email === who) && (!hideMine || r.user_id !== me));
+    const people = [...new Set((log || []).map((r) => r.user_email).filter(Boolean))];
+    return (React.createElement("div", { className: "overlay", onClick: onClose },
+        React.createElement("div", { className: "sheet tall", onClick: (e) => e.stopPropagation() },
+            React.createElement("div", { className: "sheet-head" },
+                React.createElement("div", { className: "sheet-name" },
+                    React.createElement("div", { className: "sheet-pn" }, "Admin"),
+                    React.createElement("div", { className: "sheet-pts" }, "Accounts, access and the change log")),
+                React.createElement("button", { className: "sheet-done", onClick: onClose }, "Close")),
+            React.createElement("div", { className: "seg", style: { marginBottom: 12 } },
+                React.createElement("button", { className: `seg-btn ${tab === "users" ? "seg-on" : ""}`, onClick: () => setTab("users") },
+                    "People",
+                    pending ? ` (${pending} new)` : ""),
+                React.createElement("button", { className: `seg-btn ${tab === "log" ? "seg-on" : ""}`, onClick: () => setTab("log") }, "Change log")),
+            err && React.createElement("p", { className: "auth-note" }, err),
+            tab === "users" && (React.createElement(React.Fragment, null,
+                React.createElement("p", { className: "legend", style: { marginTop: 0 } },
+                    React.createElement("b", null, "Coach"),
+                    ": everything \u00B7 ",
+                    React.createElement("b", null, "Assistant"),
+                    ": view only \u00B7 ",
+                    React.createElement("b", null, "Family"),
+                    ": their player(s) and team results \u00B7 ",
+                    React.createElement("b", null, "Pending"),
+                    ": waiting \u00B7 ",
+                    React.createElement("b", null, "No access"),
+                    ": blocked. New sign-ups show up here as Pending."),
+                !users && !err && React.createElement("p", { className: "legend" }, "Loading\u2026"),
+                (users || []).map((u) => {
+                    const mine = u.id === me;
+                    const role = val(u, "role");
+                    const pids = val(u, "player_ids") || [];
+                    return (React.createElement("div", { key: u.id, className: `admin-user ${u.role === "pending" ? "admin-new" : ""}` },
+                        React.createElement("div", { className: "admin-top" },
+                            React.createElement("div", { className: "ag-main" },
+                                React.createElement("div", { className: "ag-opp" },
+                                    u.display_name || u.email,
+                                    mine ? " (you)" : ""),
+                                React.createElement("div", { className: "ag-meta" },
+                                    u.email,
+                                    " \u00B7 joined ",
+                                    fmtDate(String(u.created_at || "").slice(0, 10)))),
+                            React.createElement("span", { className: `role-pill role-${u.role}` }, ROLE_LABEL[u.role] || u.role)),
+                        mine ? React.createElement("p", { className: "legend", style: { margin: "6px 0 0" } }, "You're the admin. (Your own role can't be changed here.)") : (React.createElement(React.Fragment, null,
+                            React.createElement("div", { className: "chiprow", style: { marginTop: 8 } }, roles.map(([k, lab]) => React.createElement("button", { key: k, className: `tchip ${role === k ? "tchip-on" : ""}`, onClick: () => edit(u, "role", k) }, lab))),
+                            role === "family" && (React.createElement(React.Fragment, null,
+                                React.createElement("div", { className: "fld-label", style: { marginTop: 8 } }, "Their player(s)"),
+                                React.createElement("div", { className: "chiprow" }, roster.map((p) => {
+                                    const on = pids.includes(p.id);
+                                    return React.createElement("button", { key: p.id, className: `tchip ${on ? "tchip-on" : ""}`, onClick: () => edit(u, "player_ids", on ? pids.filter((x) => x !== p.id) : [...pids, p.id]) },
+                                        "#",
+                                        p.num,
+                                        " ",
+                                        p.name);
+                                })),
+                                pids.length === 0 && React.createElement("p", { className: "legend", style: { margin: "4px 0 0" } }, "Pick at least one player, or they'll see team results only."))),
+                            edits[u.id] && (React.createElement("div", { className: "modal-btns", style: { marginTop: 8 } },
+                                React.createElement("button", { className: "btn btn-primary", onClick: () => save(u) }, "Save"),
+                                React.createElement("button", { className: "btn", onClick: () => { const n = { ...edits }; delete n[u.id]; setEdits(n); } }, "Cancel")))))));
+                }),
+                React.createElement("button", { className: "btn btn-block", style: { marginTop: 10 }, onClick: loadUsers }, "Refresh"))),
+            tab === "log" && (React.createElement(React.Fragment, null,
+                React.createElement("p", { className: "legend", style: { marginTop: 0 } }, "Every stat change saved to the cloud: who made it, when, and the old and new value. Only you can see this."),
+                React.createElement("div", { className: "chiprow" },
+                    React.createElement("button", { className: `tchip ${!who ? "tchip-on" : ""}`, onClick: () => setWho("") }, "Everyone"),
+                    people.map((p) => React.createElement("button", { key: p, className: `tchip ${who === p ? "tchip-on" : ""}`, onClick: () => setWho(p) }, p))),
+                React.createElement("label", { className: "row-toggle", style: { margin: "8px 0" } },
+                    React.createElement("span", null, "Hide my own changes"),
+                    React.createElement("input", { type: "checkbox", checked: hideMine, onChange: (e) => setHideMine(e.target.checked) })),
+                !log && !err && React.createElement("p", { className: "legend" }, "Loading\u2026"),
+                log && rows.length === 0 && React.createElement("p", { className: "legend" }, "No changes to show."),
+                rows.map((r) => {
+                    const d = r.new_value != null && r.old_value != null ? Number(r.new_value) - Number(r.old_value) : null;
+                    const when = new Date(r.at);
+                    return (React.createElement("div", { key: r.id, className: "audit-row" },
+                        React.createElement("div", { className: "audit-when" },
+                            when.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+                            " ",
+                            when.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }),
+                            " \u00B7 ",
+                            r.user_email || "unknown"),
+                        React.createElement("div", { className: "audit-what" },
+                            r.game_label,
+                            r.player_label ? ` · ${r.player_label}` : "",
+                            " \u00B7 ",
+                            React.createElement("b", null, auditLabel(r.field)),
+                            " ",
+                            r.note ? r.note : React.createElement(React.Fragment, null,
+                                Number(r.old_value),
+                                " \u2192 ",
+                                Number(r.new_value),
+                                " ",
+                                d != null && React.createElement("span", { className: d > 0 ? "audit-up" : "audit-down" },
+                                    "(",
+                                    d > 0 ? "+" : "",
+                                    d,
+                                    ")")))));
+                }),
+                React.createElement("button", { className: "btn btn-block", style: { marginTop: 10 }, onClick: loadLog }, "Refresh"))))));
+}
+// Entry point: with sign-in turned on, decide what this person sees.
+function AuthGate() {
+    const [phase, setPhase] = useState("loading");
+    const [profile, setProfile] = useState(() => lsGet(PROFILE_KEY));
+    const [recoveryToken, setRecoveryToken] = useState(null);
+    const [msg, setMsg] = useState("");
+    const routeFor = (p) => (p.role === "family" ? "family" : ["admin", "coach", "assistant"].includes(p.role) ? "app" : "pending");
+    async function boot() {
+        setPhase("loading");
+        const h = (typeof location !== "undefined" && location.hash) || "";
+        if (/access_token=/.test(h)) {
+            const q = new URLSearchParams(h.replace(/^#/, ""));
+            history.replaceState(null, "", location.pathname + location.search);
+            if (q.get("type") === "recovery") {
+                setRecoveryToken(q.get("access_token"));
+                setPhase("recovery");
+                return;
+            }
+            if (q.get("refresh_token")) {
+                lsSet(AUTH_KEY, { access_token: q.get("access_token"), refresh_token: q.get("refresh_token"),
+                    expires_at: Number(q.get("expires_at")) || Math.floor(Date.now() / 1000) + 3600, user: null });
+            }
+        }
+        const s = await authSession();
+        if (!s) {
+            setPhase("login");
+            return;
+        }
+        let uid = s.user && s.user.id;
+        try {
+            if (!uid) {
+                const u = await authCall("user", null, { method: "GET", token: s.access_token });
+                uid = u.id;
+                lsSet(AUTH_KEY, { ...s, user: { id: u.id, email: u.email } });
+            }
+            const rows = await api(`profiles?id=eq.${uid}&select=*`);
+            const p = rows && rows[0];
+            if (!p) {
+                setProfile(null);
+                setMsg("Your account isn't set up yet. Try again in a minute.");
+                setPhase("pending");
+                return;
+            }
+            lsSet(PROFILE_KEY, p);
+            setProfile(p);
+            setMsg("");
+            setPhase(routeFor(p));
+        }
+        catch (e) {
+            const cached = lsGet(PROFILE_KEY);
+            if (cached && (!uid || cached.id === uid)) {
+                setProfile(cached);
+                setPhase(routeFor(cached));
+            }
+            else {
+                setMsg("Couldn't reach the server. " + friendlyAuthError(e.message));
+                setPhase("login");
+            }
+        }
+    }
+    useEffect(() => { boot(); }, []);
+    async function signOut() { await authSignOut(); setProfile(null); setMsg(""); setPhase("login"); }
+    if (phase === "loading")
+        return React.createElement(Shell, null,
+            React.createElement("div", { className: "empty" },
+                React.createElement("div", { className: "empty-title" }, "Loading\u2026")));
+    if (phase === "login")
+        return React.createElement(LoginScreen, { onDone: boot, msg: msg });
+    if (phase === "recovery")
+        return React.createElement(RecoveryScreen, { token: recoveryToken, onDone: (m) => { setMsg(m); authSignOut(); setPhase("login"); } });
+    if (phase === "pending")
+        return React.createElement(PendingScreen, { profile: profile, msg: msg, onRefresh: boot, onSignOut: signOut });
+    if (phase === "family")
+        return React.createElement(FamilyView, { profile: profile, onSignOut: signOut });
+    return React.createElement(TrackerApp, { auth: { profile, role: profile.role, readOnly: profile.role === "assistant", isAdmin: profile.role === "admin", signOut } });
+}
+function App() {
+    if (!AUTH_ON)
+        return React.createElement(TrackerApp, { auth: null });
+    return React.createElement(AuthGate, null);
 }
 /* ---------------------------- helpers ----------------------------- */
 function periodLabels(rules) {
@@ -511,9 +1216,28 @@ function runSelfCheck() {
     });
 }
 /* =================================================================== */
-function App() {
+function TrackerApp({ auth }) {
     const [loaded, setLoaded] = useState(false);
-    const [state, setState] = useState(initialState);
+    const [state, setStateRaw] = useState(initialState);
+    const readOnly = !!(auth && auth.readOnly);
+    const readOnlyRef = useRef(readOnly);
+    readOnlyRef.current = readOnly;
+    // Assistant coaches can look around (open games, switch seasons) but not change data.
+    function setState(u) {
+        if (!readOnlyRef.current)
+            return setStateRaw(u);
+        setStateRaw((prev) => {
+            const next = typeof u === "function" ? u(prev) : u;
+            const changed = Object.keys({ ...prev, ...next }).filter((k) => prev[k] !== next[k]);
+            if (changed.every((k) => k === "activeGameId" || k === "activeSeasonId"))
+                return next;
+            setTimeout(() => toast("View only: ask a coach to make changes"), 0);
+            return prev;
+        });
+    }
+    const [showAdmin, setShowAdmin] = useState(false);
+    // in sign-in mode the team comes from the person's account, not a typed-in key
+    const effCfg = () => (auth ? { ...getCloudCfg(), team: auth.profile.team_key || getCloudCfg().team, enabled: true } : getCloudCfg());
     const [tab, setTab] = useState("home");
     const [activePlayer, setActivePlayer] = useState(null);
     const [scope, setScope] = useState("game"); // game | tournament | season
@@ -587,7 +1311,7 @@ function App() {
         (async () => {
             const s = await loadState();
             let next = s ? { ...initialState, ...s } : null;
-            const cfg = getCloudCfg();
+            const cfg = effCfg();
             if (cfg.enabled && cfg.url && cfg.team) {
                 try {
                     const r = await cloudPull(cfg);
@@ -601,14 +1325,19 @@ function App() {
                 }
             }
             // always run the migration (also gives a brand-new install its first season)
-            setState(migrateState({ ...initialState, ...(next || {}) }));
+            setStateRaw(migrateState({ ...initialState, ...(next || {}) }));
             setLoaded(true);
         })();
     }, []);
     // Use the on-screen values (the `cloud` state), so the buttons work even when
     // browser storage is flaky. Fall back to stored config for the auto-push.
     async function syncPushNow(showToast) {
-        const cfg = showToast ? readCloudFields() : { ...getCloudCfg(), ...cloud };
+        if (readOnly) {
+            if (showToast)
+                toast("View only: nothing to save");
+            return;
+        }
+        const cfg = auth ? effCfg() : showToast ? readCloudFields() : { ...getCloudCfg(), ...cloud };
         const url = (cfg.url || "").trim(), team = (cfg.team || "").trim(), key = (cfg.key || "").trim();
         if (!url || !team || !key) {
             if (showToast) {
@@ -631,7 +1360,7 @@ function App() {
         }
     }
     async function syncPullNow() {
-        const cfg = readCloudFields();
+        const cfg = auth ? effCfg() : readCloudFields();
         const url = (cfg.url || "").trim(), team = (cfg.team || "").trim(), key = (cfg.key || "").trim();
         if (!url || !team || !key) {
             setSyncMsg("Enter Supabase URL, key, and team key first");
@@ -641,7 +1370,7 @@ function App() {
         try {
             const r = await cloudPull({ url, team, key });
             if (r && r.data) {
-                setState({ ...initialState, ...migrateState(r.data) });
+                setStateRaw({ ...initialState, ...migrateState(r.data) });
                 setSyncMsg("Pulled from cloud");
                 toast("Pulled from cloud");
             }
@@ -660,12 +1389,26 @@ function App() {
             return;
         clearTimeout(saveTimer.current);
         saveTimer.current = setTimeout(() => saveState(state), 400);
-        if (cloud.enabled && cloud.url && cloud.team) {
+        if (!readOnly && (auth || (cloud.enabled && cloud.url && cloud.team))) {
             clearTimeout(pushTimer.current);
             pushTimer.current = setTimeout(() => { syncPushNow(false); }, 1500);
         }
         return () => clearTimeout(saveTimer.current);
     }, [state, loaded]);
+    // view-only accounts follow the live game: pull the latest every 20 seconds
+    useEffect(() => {
+        if (!auth || !readOnly || !loaded)
+            return;
+        const i = setInterval(async () => {
+            try {
+                const r = await cloudPull(effCfg());
+                if (r && r.data)
+                    setStateRaw((prev) => ({ ...initialState, ...migrateState(r.data), activeGameId: prev.activeGameId, activeSeasonId: prev.activeSeasonId }));
+            }
+            catch (e) { }
+        }, 20000);
+        return () => clearInterval(i);
+    }, [loaded, readOnly]);
     const { settings, roster } = state;
     const seasons = state.seasons || [];
     const activeSeasonId = state.activeSeasonId || (seasons[seasons.length - 1] || {}).id || null;
@@ -1665,7 +2408,11 @@ function App() {
                 React.createElement("span", { className: "brand-x" }, "\u2715"),
                 "FACEOFF",
                 React.createElement("span", { className: "brand-sub" }, "Lax Stats")),
-            React.createElement("div", { className: "brand-sub" }, "Boys lacrosse \u00B7 season tracker")),
+            React.createElement("div", { className: "brand-sub" }, "Boys lacrosse \u00B7 season tracker"),
+            auth && (React.createElement("div", { className: "whoami" },
+                React.createElement("span", { className: `role-pill role-${auth.role}` }, ROLE_LABEL[auth.role]),
+                React.createElement("span", { className: "whoami-name" }, auth.profile.display_name || auth.profile.email),
+                readOnly && React.createElement("span", { className: "whoami-ro" }, "View only")))),
         tab === "home" && homeView === "seasons" && (() => {
             const list = [...seasons].reverse();
             return (React.createElement("section", { className: "setup" },
@@ -1805,7 +2552,11 @@ function App() {
                     React.createElement("button", { className: "home-tile", onClick: () => setShowHelp(true) },
                         React.createElement("span", { className: "home-ico" }, "?"),
                         React.createElement("span", { className: "home-t" }, "Guide"),
-                        React.createElement("span", { className: "home-s" }, "How everything works"))),
+                        React.createElement("span", { className: "home-s" }, "How everything works")),
+                    auth && auth.isAdmin && (React.createElement("button", { className: "home-tile", onClick: () => setShowAdmin(true) },
+                        React.createElement("span", { className: "home-ico" }, "\u2605"),
+                        React.createElement("span", { className: "home-t" }, "Admin"),
+                        React.createElement("span", { className: "home-s" }, "People, access, change log")))),
                 recent.length > 0 && (React.createElement("div", { className: "card" },
                     React.createElement("div", { className: "card-title" }, "Recent results"),
                     recent.map((g) => (React.createElement("div", { key: g.id, className: "allgame" },
@@ -2298,7 +3049,23 @@ function App() {
                 React.createElement("div", { className: "card-sub" }, "New season"),
                 React.createElement("button", { className: "btn btn-block", onClick: startNewSeason }, "Start or switch season"),
                 React.createElement("p", { className: "legend", style: { marginTop: 8 } }, "A backup captures everything (roster, tournaments, games, stats). The roster code shares just your players with anyone using this app. Seasons are managed on Home: starting a new season keeps your team, roster and rules, and older seasons stay saved and can be reopened any time.")),
-            React.createElement("div", { className: "card" },
+            auth && (React.createElement("div", { className: "card" },
+                React.createElement("div", { className: "card-title" }, "Your account"),
+                React.createElement("p", { className: "legend", style: { marginTop: 0 } },
+                    "Signed in as ",
+                    React.createElement("b", null, auth.profile.display_name || auth.profile.email),
+                    " (",
+                    auth.profile.email,
+                    ") \u00B7 ",
+                    ROLE_LABEL[auth.role],
+                    readOnly ? " · you can view everything but not change it." : ""),
+                auth.isAdmin && React.createElement("button", { className: "btn btn-primary btn-block", onClick: () => setShowAdmin(true) }, "Admin: people, access and change log"),
+                React.createElement("div", { className: "modal-btns", style: { marginTop: 10 } },
+                    !readOnly && React.createElement("button", { className: "btn", onClick: () => syncPushNow(true) }, "Save to cloud now"),
+                    React.createElement("button", { className: "btn", onClick: syncPullNow }, "Get latest")),
+                React.createElement("button", { className: "btn btn-block", style: { marginTop: 8 }, onClick: auth.signOut }, "Sign out"),
+                syncMsg && React.createElement("p", { className: "legend", style: { marginTop: 8 } }, syncMsg))),
+            !auth && React.createElement("div", { className: "card" },
                 React.createElement("div", { className: "card-title" }, "Cloud sync (Supabase)"),
                 React.createElement("p", { className: "legend", style: { marginTop: 0 } }, "Back up and sync across devices to your Supabase database. The app stays offline-first; changes push to Supabase when connected."),
                 React.createElement("label", { className: "fld-label" }, "Supabase URL"),
@@ -2516,6 +3283,19 @@ function App() {
                         ", or print ",
                         React.createElement("b", null, "player cards"),
                         "."),
+                    React.createElement("div", { className: "help-h" }, "Accounts and access"),
+                    React.createElement("div", { className: "help-p" },
+                        "Everyone signs in with their email and a password. New accounts wait as ",
+                        React.createElement("b", null, "Pending"),
+                        " until the admin approves them. ",
+                        React.createElement("b", null, "Coach"),
+                        " can do everything. ",
+                        React.createElement("b", null, "Assistant Coach"),
+                        " sees everything but can't change it, and their screen refreshes every 20 seconds during a game. ",
+                        React.createElement("b", null, "Family"),
+                        " sees only their own player's stats plus the team's results and schedule. The admin (Home \u2192 Admin) approves people, sets roles, links family accounts to their player, and reviews the ",
+                        React.createElement("b", null, "change log"),
+                        " of every stat edit."),
                     React.createElement("div", { className: "help-h" }, "Backups & sync (Setup)"),
                     React.createElement("div", { className: "help-p" },
                         React.createElement("b", null, "Download backup file"),
@@ -2896,6 +3676,7 @@ function App() {
                                 return; const f = confirmBox.onConfirm; setConfirmBox(null); setConfirmType(""); if (f)
                                 f(); } }, needType ? "Delete" : "Confirm")))));
         })(),
+        showAdmin && auth && auth.isAdmin && React.createElement(AdminPanel, { roster: roster, me: auth.profile.id, onClose: () => setShowAdmin(false) }),
         toastMsg && React.createElement("div", { className: "toast" }, toastMsg)));
 }
 /* ----------------------- printable report ----------------------- */
@@ -4190,6 +4971,37 @@ const CSS = `
 .slot-add .field { flex:1; min-width:0; }
 .slot-row { display:flex; align-items:center; gap:8px; padding:10px 12px; border-top:1px solid var(--line); }
 .tgroup-empty { padding:10px 12px; color:var(--dim); font-size:13px; }
+.whoami { display:flex; align-items:center; gap:8px; margin-top:8px; flex-wrap:wrap; }
+.whoami-name { font-size:12.5px; color:var(--dim); font-weight:600; }
+.whoami-ro { font-size:10px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:#FF8A94; border:1px solid rgba(255,138,148,.5); border-radius:6px; padding:2px 6px; }
+.role-pill { font-size:10px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; padding:3px 7px; border-radius:6px; background:var(--bg3); color:var(--dim); white-space:nowrap; }
+.role-admin { background:rgba(255,194,71,.18); color:var(--gold); }
+.role-coach { background:rgba(91,208,143,.16); color:#5BD08F; }
+.role-assistant { background:rgba(76,141,255,.16); color:#7FAEFF; }
+.role-family { background:rgba(163,113,247,.18); color:#C3A3FF; }
+.role-pending { background:rgba(255,138,148,.16); color:#FF8A94; }
+.role-disabled { background:var(--bg3); color:var(--dim); text-decoration:line-through; }
+.auth-card { margin-top:8px; }
+.auth-seg { display:flex; margin-bottom:6px; }
+.auth-seg .seg-btn { flex:1; }
+.auth-note { font-size:13px; line-height:1.45; color:var(--gold); margin:10px 0 0; }
+.fam-tiles { display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; }
+.fam-game { border-top:1px solid var(--line); padding:8px 2px; }
+.card-title + .fam-game { border-top:none; }
+.fam-game-row { width:100%; display:flex; align-items:center; gap:10px; background:transparent; border:none; color:var(--text); text-align:left; padding:2px 0; cursor:pointer; }
+.fam-game-row .ag-main { display:flex; flex-direction:column; }
+.fam-line { font-size:12.5px; color:var(--text); margin-top:4px; }
+.fam-line b { color:var(--dim); font-weight:700; }
+.fam-detail { font-size:12px; color:var(--dim); margin-top:6px; line-height:1.5; }
+.fam-detail b { color:var(--text); }
+.admin-user { border-top:1px solid var(--line); padding:12px 2px; }
+.admin-new { background:rgba(255,138,148,.05); }
+.admin-top { display:flex; align-items:center; gap:10px; }
+.audit-row { border-top:1px solid var(--line); padding:8px 2px; }
+.audit-when { font-size:11px; color:var(--dim); }
+.audit-what { font-size:13px; margin-top:2px; line-height:1.4; }
+.audit-up { color:#5BD08F; font-weight:700; }
+.audit-down { color:#FF8A94; font-weight:700; }
 .home-hero { margin:12px 14px 0; padding:16px 16px 14px; background:linear-gradient(180deg, var(--bg2), #101a15); border:1px solid var(--line); border-top:3px solid; border-radius:16px; }
 .home-hero-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .home-season { font-family:'Barlow Condensed'; font-weight:700; font-size:15px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); margin-top:6px; }
